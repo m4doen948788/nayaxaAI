@@ -9,24 +9,18 @@ const XLSX = require('xlsx');
 
 const summaryCache = new Map();
 
-let keyRotationIndex = 0;
-
 /**
- * Round-robin rotation across all active Gemini API keys.
- * Keys are now stored in dbNayaxa.
+ * Get the primary Gemini API key.
+ * Rotation logic removed as per user request (one paid key only).
  */
 const getApiKey = async () => {
     try {
-        const [rows] = await dbNayaxa.query('SELECT api_key FROM gemini_api_keys WHERE is_active = 1 ORDER BY id ASC');
-        if (rows.length > 0) {
-            const key = rows[keyRotationIndex % rows.length].api_key;
-            keyRotationIndex = (keyRotationIndex + 1) % rows.length;
-            return key;
-        }
+        const [rows] = await dbNayaxa.query('SELECT api_key FROM gemini_api_keys WHERE is_active = 1 LIMIT 1');
+        if (rows.length > 0) return rows[0].api_key;
     } catch (err) {
-        console.error('Error fetching API Keys from gemini_api_keys:', err);
+        console.error('Error fetching API Key from gemini_api_keys:', err);
     }
-    return process.env.GEMINI_API_KEY_1 || process.env.GEMINI_API_KEY;
+    return process.env.GEMINI_API_KEY;
 };
 
 const DEFAULT_MODEL = 'gemini-2.5-pro';
@@ -334,9 +328,13 @@ const nayaxaGeminiService = {
         } catch (error) {
             console.error('--- GEMINI CRITICAL ERROR ---');
             console.error('Message:', error.message);
-            console.error('Stack:', error.stack);
-            console.error('-----------------------------');
-            return `Maaf, terjadi kesalahan teknis pada Nayaxa Engine: ${error.message}. Mohon cek API Key atau kuota Gemini Anda.`;
+            
+            // Specific 429 (Rate Limit) Handling
+            if (error.status === 429 || error.message?.includes('429') || error.message?.includes('quota')) {
+                return "Maaf, Nayaxa sedang sibuk, silakan coba lagi.";
+            }
+
+            return `Maaf, terjadi kesalahan teknis pada Nayaxa Engine: ${error.message}.`;
         }
     }
 };

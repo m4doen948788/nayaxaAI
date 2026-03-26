@@ -214,7 +214,11 @@ const nayaxaDeepSeekService = {
             if (generatedChartMarkers.length > 0) text += "\n\n" + generatedChartMarkers.join("\n\n");
             return text;
         } catch (error) {
-            console.error('DeepSeek Error:', error);
+            console.error('DeepSeek Error:', error.message);
+            // Specific 429 (Rate Limit) Handling
+            if (error.response?.status === 429 || error.message?.includes('429')) {
+                return "Maaf, Nayaxa sedang sibuk, silakan coba lagi.";
+            }
             return "Maaf, terjadi gangguan saat Nayaxa memproses data.";
         }
     }

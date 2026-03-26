@@ -172,57 +172,103 @@ const nayaxaStandalone = {
 
     searchInternet: async (query) => {
         try {
-            console.log(`[Nayaxa] Searching Internet for: ${query}`);
+            console.log(`[Nayaxa] Searching Internet (Free/Multi-Source) for: ${query}`);
             const results = [];
+            const cheerio = require('cheerio');
 
-            // 1. Try Wikipedia (Factual/Detailed)
+            const headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
+            };
+
+            const scrapeGoogle = async (searchQuery) => {
+                try {
+                    const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}&gbv=1&hl=id`;
+                    const gRes = await axios.get(googleUrl, { headers, timeout: 6000 });
+                    const $g = cheerio.load(gRes.data);
+                    $g('div.ZIN8ne, div.g').each((i, el) => {
+                        const title = $g(el).find('h3').text();
+                        const linkRaw = $g(el).find('a').attr('href');
+                        const snippet = $g(el).find('.VwiC3b, .kCrYT, div').last().text();
+                        if (title && linkRaw && (linkRaw.includes('/url?q=') || linkRaw.startsWith('http'))) {
+                            let link = linkRaw.startsWith('http') ? linkRaw : decodeURIComponent(linkRaw.split('/url?q=')[1].split('&')[0]);
+                            if (link.startsWith('http')) {
+                                results.push({ source: 'Google', title: title.trim(), snippet: snippet.trim() || 'No snippet', link });
+                            }
+                        }
+                    });
+                } catch (err) { console.error('Google Scrape Error:', err.message); }
+            };
+
+            const scrapeBing = async (searchQuery) => {
+                try {
+                    const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(searchQuery)}&cc=ID`;
+                    const response = await axios.get(searchUrl, { headers, timeout: 6000 });
+                    const $ = cheerio.load(response.data);
+                    $('.b_algo').each((i, el) => {
+                        const title = $(el).find('h2').text() || $(el).find('a').first().text();
+                        let link = $(el).find('h2 a').attr('href') || $(el).find('a').attr('href');
+                        const snippet = $(el).find('.b_caption p, .b_algo_snippet').text();
+                        if (title && link && link.startsWith('http')) {
+                            results.push({ source: 'Bing', title: title.trim(), snippet: snippet.trim() || 'No snippet', link });
+                        }
+                    });
+                } catch (err) { console.error('Bing Scrape Error:', err.message); }
+            };
+
+            // 1. Concurrent Parallel Search
+            await Promise.all([scrapeGoogle(query), scrapeBing(query)]);
+
+            // 2. Wikipedia (Factual)
             try {
                 const wikiRes = await axios.get(`https://id.wikipedia.org/w/api.php`, {
-                    params: {
-                        action: 'query',
-                        format: 'json',
-                        list: 'search',
-                        srsearch: query,
-                        srlimit: 3
-                    }
+                    params: { action: 'query', format: 'json', list: 'search', srsearch: query, srlimit: 2 },
+                    headers: { 'User-Agent': 'NayaxaAssistant/1.1' }
                 });
                 if (wikiRes.data.query?.search) {
                     wikiRes.data.query.search.forEach(s => {
-                        results.push({
-                            source: 'Wikipedia',
-                            title: s.title,
-                            snippet: s.snippet.replace(/<[^>]*>/g, ''),
-                            link: `https://id.wikipedia.org/wiki/${encodeURIComponent(s.title)}`
-                        });
+                        results.push({ source: 'Wikipedia', title: s.title, snippet: s.snippet.replace(/<[^>]*>/g, ''), link: `https://id.wikipedia.org/wiki/${encodeURIComponent(s.title)}` });
                     });
                 }
             } catch (err) { console.error('Wiki Error:', err.message); }
 
-            // 2. Try DuckDuckGo (General Web)
-            // Using their "Instant Answer" API or a light HTML fetch if allowed
-            try {
-                const ddgRes = await axios.get(`https://api.duckduckgo.com/`, {
-                    params: { q: query, format: 'json', no_html: 1, skip_disambig: 1 }
-                });
-                if (ddgRes.data.AbstractText) {
-                    results.push({
-                        source: 'DuckDuckGo',
-                        title: ddgRes.data.Heading || query,
-                        snippet: ddgRes.data.AbstractText,
-                        link: ddgRes.data.AbstractURL
-                    });
-                }
-            } catch (err) { console.error('DDG Error:', err.message); }
+            // 3. Fallback/Refinement Search (if poor quality)
+            const keywordMatch = (title) => {
+                const words = query.toLowerCase().split(' ');
+                return words.some(w => w.length > 3 && title.toLowerCase().includes(w));
+            };
+
+            if (results.length < 3 || !results.some(r => keywordMatch(r.title))) {
+                console.log('[Nayaxa] Low confidence results, trying query refinement...');
+                // Try adding common context words if it's a specific name/entity
+                const refinedQuery = query + ' indonesia';
+                await scrapeBing(refinedQuery);
+            }
 
             if (results.length === 0) {
                 return { message: "Maaf, hasil pencarian tidak ditemukan saat ini." };
             }
 
+            // Deduplicate and filter
+            const uniqueResults = [];
+            const seenLinks = new Set();
+            for (const res of results) {
+                // Filter out obviously irrelevant results like "How to Edit hosts" if it doesn't match query
+                if (!seenLinks.has(res.link) && keywordMatch(res.title + res.snippet)) {
+                    seenLinks.add(res.link);
+                    uniqueResults.push(res);
+                }
+            }
+
+            // If empty after filtering, return original results unfiltered but limited
+            const finalResults = uniqueResults.length > 0 ? uniqueResults : results.slice(0, 5);
+
             return { 
                 success: true, 
                 query,
-                results: results.slice(0, 5),
-                search_engine_used: 'Bing & Wikipedia (Integrated)'
+                results: finalResults.slice(0, 6),
+                search_engine_used: 'Polyglot Search (Free Scrape)'
             };
         } catch (error) {
             console.error('Search Internet Error:', error);
