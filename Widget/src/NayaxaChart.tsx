@@ -114,6 +114,40 @@ function NayaxaLineChart({ data, unit, colors, width }: { data: ChartDataPoint[]
   );
 }
 
+function NayaxaMultiLineChart({ series, unit, colors, width }: { series: ChartSeries[], unit: string, colors: string[], width: number }) {
+  const PAD = { top: 60, right: 30, bottom: 60, left: 40 };
+  const innerWidth = width - PAD.left - PAD.right;
+  const innerHeight = 180;
+  
+  const allValues = series.flatMap(s => s.data.map(d => d.value));
+  const maxValue = Math.max(...allValues, 1);
+  
+  const SERIES_COLORS = ['#6366f1', '#f43f5e', '#10b981', '#f59e0b', '#0ea5e9'];
+
+  return (
+    <svg width={width} height={innerHeight + PAD.top + PAD.bottom + 40} style={{ display: 'block', overflow: 'visible' }}>
+      {series.map((s, si) => {
+        const color = SERIES_COLORS[si % SERIES_COLORS.length];
+        const points = s.data.map((d, i) => ({
+          x: PAD.left + (i / Math.max(s.data.length - 1, 1)) * innerWidth,
+          y: PAD.top + innerHeight - (d.value / maxValue) * innerHeight
+        }));
+        const polyline = points.map(p => `${p.x},${p.y}`).join(' ');
+        return (
+          <g key={si}>
+            <polyline points={polyline} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+            {points.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={3} fill={color} />)}
+            <g transform={`translate(${10 + si * 80}, ${innerHeight + PAD.top + PAD.bottom + 10})`}>
+              <circle cx={0} cy={0} r={5} fill={color} />
+              <text x={10} y={4} fontSize={10} fill="#64748b font-bold">{s.name}</text>
+            </g>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 function NayaxaPieChart({ data, colors, width, donut }: { data: ChartDataPoint[], colors: string[], width: number, donut?: boolean }) {
   const cx = width / 2;
   const r = 80;
@@ -153,7 +187,10 @@ function NayaxaPieChart({ data, colors, width, donut }: { data: ChartDataPoint[]
 
 export default function NayaxaChart({ spec }: { spec: ChartSpec }) {
   const chartRef = useRef<HTMLDivElement>(null);
-  if (!spec || (!spec.data && !spec.series)) return null;
+  
+  const hasSingleSeries = spec?.data && Array.isArray(spec.data) && spec.data.length > 0;
+  const hasMultiSeries  = spec?.series && Array.isArray(spec.series) && spec.series.length > 0;
+  if (!spec || (!hasSingleSeries && !hasMultiSeries)) return null;
 
   const colors = COLOR_PALETTES[spec.color || 'indigo'] || COLOR_PALETTES.indigo;
   const unit = spec.unit ? ` ${spec.unit}` : '';
@@ -176,6 +213,9 @@ export default function NayaxaChart({ spec }: { spec: ChartSpec }) {
   };
 
   const renderChart = () => {
+    if (spec.series && spec.series.length > 0) {
+      return <NayaxaMultiLineChart series={spec.series} unit={unit} colors={colors} width={width} />;
+    }
     const data = spec.data || [];
     switch (spec.type) {
       case 'column': return <NayaxaColumnChart data={data} unit={unit} colors={colors} width={width} />;
