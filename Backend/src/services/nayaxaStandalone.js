@@ -184,7 +184,8 @@ const nayaxaStandalone = {
 
             const scrapeGoogle = async (searchQuery) => {
                 try {
-                    const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}&gbv=1&hl=id`;
+                    // Force hl=id and gl=id to avoid wrong languages
+                    const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}&gbv=1&hl=id&gl=id`;
                     const gRes = await axios.get(googleUrl, { headers, timeout: 6000 });
                     const $g = cheerio.load(gRes.data);
                     $g('div.ZIN8ne, div.g').each((i, el) => {
@@ -203,7 +204,8 @@ const nayaxaStandalone = {
 
             const scrapeBing = async (searchQuery) => {
                 try {
-                    const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(searchQuery)}&cc=ID`;
+                    // Force setlang=id, hl=id, and cc=ID
+                    const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(searchQuery)}&setlang=id&hl=id&cc=ID`;
                     const response = await axios.get(searchUrl, { headers, timeout: 6000 });
                     const $ = cheerio.load(response.data);
                     $('.b_algo').each((i, el) => {
@@ -233,41 +235,37 @@ const nayaxaStandalone = {
                 }
             } catch (err) { console.error('Wiki Error:', err.message); }
 
-            // 3. Fallback/Refinement Search (if poor quality)
-            const keywordMatch = (title) => {
-                const words = query.toLowerCase().split(' ');
-                return words.some(w => w.length > 3 && title.toLowerCase().includes(w));
+            const keywordMatch = (text) => {
+                const words = query.toLowerCase().split(' ').filter(w => w.length > 2);
+                if (words.length === 0) return true;
+                return words.some(w => text.toLowerCase().includes(w));
             };
 
-            if (results.length < 3 || !results.some(r => keywordMatch(r.title))) {
-                console.log('[Nayaxa] Low confidence results, trying query refinement...');
-                // Try adding common context words if it's a specific name/entity
-                const refinedQuery = query + ' indonesia';
-                await scrapeBing(refinedQuery);
-            }
-
-            if (results.length === 0) {
-                return { message: "Maaf, hasil pencarian tidak ditemukan saat ini." };
-            }
-
-            // Deduplicate and filter
-            const uniqueResults = [];
+            // Filter out junk
+            const filteredResults = [];
             const seenLinks = new Set();
             for (const res of results) {
-                // Filter out obviously irrelevant results like "How to Edit hosts" if it doesn't match query
-                if (!seenLinks.has(res.link) && keywordMatch(res.title + res.snippet)) {
-                    seenLinks.add(res.link);
-                    uniqueResults.push(res);
+                if (!seenLinks.has(res.link)) {
+                    // Strict match: Must contain at least one of the query keywords
+                    if (keywordMatch(res.title + ' ' + res.snippet)) {
+                        seenLinks.add(res.link);
+                        filteredResults.push(res);
+                    }
                 }
             }
 
-            // If empty after filtering, return original results unfiltered but limited
-            const finalResults = uniqueResults.length > 0 ? uniqueResults : results.slice(0, 5);
+            if (filteredResults.length === 0) {
+                // If results exist but none matched (hallucination detected)
+                if (results.length > 0) {
+                    return { message: "Hasil pencarian ditemukan tetapi tidak relevan dengan kueri Anda. Sila coba dengan kata kunci yang lebih spesifik." };
+                }
+                return { message: "Maaf, hasil pencarian tidak ditemukan saat ini." };
+            }
 
             return { 
                 success: true, 
                 query,
-                results: finalResults.slice(0, 6),
+                results: filteredResults.slice(0, 6),
                 search_engine_used: 'Polyglot Search (Free Scrape)'
             };
         } catch (error) {
