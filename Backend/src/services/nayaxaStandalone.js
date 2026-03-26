@@ -176,133 +176,88 @@ const nayaxaStandalone = {
             const results = [];
             const cheerio = require('cheerio');
 
-            const headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
+            const mobileHeaders = {
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Cache-Control': 'no-cache'
             };
 
             const scrapeGoogle = async (searchQuery) => {
                 try {
-                    // Force hl=id and gl=id to avoid wrong languages
-                    const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}&gbv=1&hl=id&gl=id`;
-                    const gRes = await axios.get(googleUrl, { headers, timeout: 6000 });
+                    const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}&hl=id`;
+                    const gRes = await axios.get(googleUrl, { headers: mobileHeaders, timeout: 15000 });
                     const $g = cheerio.load(gRes.data);
-                    $g('div.ZIN8ne, div.g').each((i, el) => {
-                        const title = $g(el).find('h3').text();
-                        const linkRaw = $g(el).find('a').attr('href');
-                        const snippet = $g(el).find('.VwiC3b, .kCrYT, div').last().text();
-                        if (title && linkRaw && (linkRaw.includes('/url?q=') || linkRaw.startsWith('http'))) {
-                            let link = linkRaw.startsWith('http') ? linkRaw : decodeURIComponent(linkRaw.split('/url?q=')[1].split('&')[0]);
-                            if (link.startsWith('http')) {
-                                results.push({ source: 'Google', title: title.trim(), snippet: snippet.trim() || 'No snippet', link });
-                            }
+                    $g('a').each((i, el) => {
+                        const title = $g(el).find('div').first().text() || $g(el).text();
+                        const link = $g(el).attr('href');
+                        if (title && link && link.startsWith('http') && !link.includes('google.com')) {
+                            results.push({ source: 'Google', title: title.trim(), snippet: 'Lihat selengkapnya di web...', link });
                         }
                     });
-                } catch (err) { console.error('Google Scrape Error:', err.message); }
+                } catch (err) { console.error('Google Error:', err.message); }
             };
 
             const scrapeBing = async (searchQuery) => {
                 try {
-                    // Force setlang=id, hl=id, and cc=ID
-                    const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(searchQuery)}&setlang=id&hl=id&cc=ID`;
-                    const response = await axios.get(searchUrl, { headers, timeout: 6000 });
+                    const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(searchQuery)}&setlang=id`;
+                    const response = await axios.get(searchUrl, { headers: mobileHeaders, timeout: 15000 });
                     const $ = cheerio.load(response.data);
-                    $('.b_algo').each((i, el) => {
-                        const title = $(el).find('h2').text() || $(el).find('a').first().text();
-                        let link = $(el).find('h2 a').attr('href') || $(el).find('a').attr('href');
+                    $('.b_algo, li.b_ans').each((i, el) => {
+                        const title = $(el).find('h2, .b_title').text();
+                        let link = $(el).find('a').attr('href');
                         const snippet = $(el).find('.b_caption p, .b_algo_snippet').text();
-                        if (title && link && link.startsWith('http')) {
+                        if (title && link && link.startsWith('http') && !link.includes('bing.com')) {
                             results.push({ source: 'Bing', title: title.trim(), snippet: snippet.trim() || 'No snippet', link });
                         }
                     });
-                } catch (err) { console.error('Bing Scrape Error:', err.message); }
+                } catch (err) { console.error('Bing Error:', err.message); }
             };
 
-            const scrapeDuckDuckGo = async (searchQuery) => {
-                try {
-                    const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`;
-                    const dRes = await axios.get(ddgUrl, { headers, timeout: 10000 });
-                    const $d = cheerio.load(dRes.data);
-                    $('.links_main.result__body').each((i, el) => {
-                        const title = $d(el).find('.result__title a').text();
-                        const link = $d(el).find('.result__title a').attr('href');
-                        const snippet = $d(el).find('.result__snippet').text();
-                        if (title && link) {
-                            results.push({ source: 'DuckDuckGo', title: title.trim(), snippet: snippet.trim() || 'No snippet', link });
-                        }
-                    });
-                } catch (err) { console.error('DDG Scrape Error:', err.message); }
-            };
+            // Force Exact Match for the name
+            const exactQuery = `"${query}"`;
+            await Promise.all([scrapeGoogle(exactQuery), scrapeBing(exactQuery)]);
 
-            // 1. Concurrent Parallel Search
-            await Promise.all([scrapeGoogle(query), scrapeBing(query), scrapeDuckDuckGo(query)]);
-
-            // 2. Wikipedia (Factual)
+            // Wikipedia (API)
             try {
                 const wikiRes = await axios.get(`https://id.wikipedia.org/w/api.php`, {
-                    params: { action: 'query', format: 'json', list: 'search', srsearch: query, srlimit: 2 },
-                    headers: { 'User-Agent': 'NayaxaAssistant/1.1' }
+                    params: { action: 'query', format: 'json', list: 'search', srsearch: query, srlimit: 3 },
+                    headers: { 'User-Agent': 'NayaxaBot/1.1' }
                 });
                 if (wikiRes.data.query?.search) {
                     wikiRes.data.query.search.forEach(s => {
                         results.push({ source: 'Wikipedia', title: s.title, snippet: s.snippet.replace(/<[^>]*>/g, ''), link: `https://id.wikipedia.org/wiki/${encodeURIComponent(s.title)}` });
                     });
                 }
-            } catch (err) { console.error('Wiki Error:', err.message); }
+            } catch (err) {}
 
             const keywordMatch = (text) => {
                 const words = query.toLowerCase().split(' ').filter(w => w.length > 2);
-                if (words.length === 0) return true;
-                // At least 50% of the query words must match for a name search
-                const matches = words.filter(w => text.toLowerCase().includes(w));
-                return matches.length >= Math.ceil(words.length / 2);
+                return words.some(w => text.toLowerCase().includes(w));
             };
 
-            // Filter out junk
             const filteredResults = [];
             const seenLinks = new Set();
             for (const res of results) {
-                if (!seenLinks.has(res.link)) {
-                    // Strict match: Must contain significant overlap with query
-                    if (keywordMatch(res.title + ' ' + res.snippet)) {
-                        seenLinks.add(res.link);
-                        filteredResults.push(res);
-                    }
+                if (!seenLinks.has(res.link) && (keywordMatch(res.title + res.snippet) || res.source === 'Wikipedia')) {
+                    seenLinks.add(res.link);
+                    filteredResults.push(res);
                 }
             }
 
             if (filteredResults.length === 0) {
-                // If nothing found for the name, try a contextual fallback (e.g., adding "indonesia")
-                if (query.split(' ').length <= 3 && !query.includes('indonesia')) {
-                    console.log('[Nayaxa] No results, trying contextual fallback...');
-                    await scrapeDuckDuckGo(query + ' indonesia');
-                    // Repeat filtering for the fallback results
-                    for (const res of results) {
-                        if (!seenLinks.has(res.link) && keywordMatch(res.title + ' ' + res.snippet)) {
-                            seenLinks.add(res.link);
-                            filteredResults.push(res);
-                        }
-                    }
-                }
-            }
-
-            if (filteredResults.length === 0) {
-                if (results.length > 0) {
-                    return { message: "Hasil pencarian ditemukan tetapi tidak relevan dengan kueri Anda. Sila coba dengan kata kunci yang lebih spesifik." };
-                }
-                return { message: "Maaf, hasil pencarian tidak ditemukan saat ini." };
+                return { message: "Maaf, hasil pencarian akurat tidak ditemukan di server ini. Hal ini mungkin disebabkan oleh pembatasan akses internet pada infrastruktur server." };
             }
 
             return { 
                 success: true, 
                 query,
-                results: filteredResults.slice(0, 6),
-                search_engine_used: 'Polyglot Search (Free Scrape)'
+                results: filteredResults.slice(0, 5),
+                search_engine_used: 'Polyglot Search (Resilience Mode)'
             };
         } catch (error) {
-            console.error('Search Internet Error:', error);
-            return { error: "Terjadi gangguan saat mengakses internet." };
+            console.error('Search Critical Error:', error.message);
+            return { error: "Terjadi gangguan koneksi internet pada server." };
         }
     }
 };
