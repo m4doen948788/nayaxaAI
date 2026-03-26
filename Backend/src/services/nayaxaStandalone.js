@@ -219,8 +219,24 @@ const nayaxaStandalone = {
                 } catch (err) { console.error('Bing Scrape Error:', err.message); }
             };
 
+            const scrapeDuckDuckGo = async (searchQuery) => {
+                try {
+                    const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`;
+                    const dRes = await axios.get(ddgUrl, { headers, timeout: 10000 });
+                    const $d = cheerio.load(dRes.data);
+                    $('.links_main.result__body').each((i, el) => {
+                        const title = $d(el).find('.result__title a').text();
+                        const link = $d(el).find('.result__title a').attr('href');
+                        const snippet = $d(el).find('.result__snippet').text();
+                        if (title && link) {
+                            results.push({ source: 'DuckDuckGo', title: title.trim(), snippet: snippet.trim() || 'No snippet', link });
+                        }
+                    });
+                } catch (err) { console.error('DDG Scrape Error:', err.message); }
+            };
+
             // 1. Concurrent Parallel Search
-            await Promise.all([scrapeGoogle(query), scrapeBing(query)]);
+            await Promise.all([scrapeGoogle(query), scrapeBing(query), scrapeDuckDuckGo(query)]);
 
             // 2. Wikipedia (Factual)
             try {
@@ -238,7 +254,9 @@ const nayaxaStandalone = {
             const keywordMatch = (text) => {
                 const words = query.toLowerCase().split(' ').filter(w => w.length > 2);
                 if (words.length === 0) return true;
-                return words.some(w => text.toLowerCase().includes(w));
+                // At least 50% of the query words must match for a name search
+                const matches = words.filter(w => text.toLowerCase().includes(w));
+                return matches.length >= Math.ceil(words.length / 2);
             };
 
             // Filter out junk
@@ -246,7 +264,7 @@ const nayaxaStandalone = {
             const seenLinks = new Set();
             for (const res of results) {
                 if (!seenLinks.has(res.link)) {
-                    // Strict match: Must contain at least one of the query keywords
+                    // Strict match: Must contain significant overlap with query
                     if (keywordMatch(res.title + ' ' + res.snippet)) {
                         seenLinks.add(res.link);
                         filteredResults.push(res);
@@ -255,7 +273,21 @@ const nayaxaStandalone = {
             }
 
             if (filteredResults.length === 0) {
-                // If results exist but none matched (hallucination detected)
+                // If nothing found for the name, try a contextual fallback (e.g., adding "indonesia")
+                if (query.split(' ').length <= 3 && !query.includes('indonesia')) {
+                    console.log('[Nayaxa] No results, trying contextual fallback...');
+                    await scrapeDuckDuckGo(query + ' indonesia');
+                    // Repeat filtering for the fallback results
+                    for (const res of results) {
+                        if (!seenLinks.has(res.link) && keywordMatch(res.title + ' ' + res.snippet)) {
+                            seenLinks.add(res.link);
+                            filteredResults.push(res);
+                        }
+                    }
+                }
+            }
+
+            if (filteredResults.length === 0) {
                 if (results.length > 0) {
                     return { message: "Hasil pencarian ditemukan tetapi tidak relevan dengan kueri Anda. Sila coba dengan kata kunci yang lebih spesifik." };
                 }
