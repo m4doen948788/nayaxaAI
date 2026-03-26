@@ -1,0 +1,26 @@
+{
+  "name": "nayaxa-engine",
+  "version": "1.0.0",
+  "description": "Nayaxa AI Engine Standalone",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test-models": "node test-models.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "axios": "^1.13.6",
+    "cors": "^2.8.6",
+    "docx": "^9.6.1",
+    "dotenv": "^16.6.1",
+    "exceljs": "^4.4.0",
+    "express": "^4.22.1",
+    "mysql2": "^3.20.0",
+    "pdfkit": "^0.16.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}
