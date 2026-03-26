@@ -170,6 +170,66 @@ const nayaxaStandalone = {
         } catch (error) { return { error: error.message }; }
     },
 
+    getNearbyPlaces: async (lat, lng, query) => {
+        try {
+            console.log(`[Nayaxa] Searching for ${query} near: ${lat}, ${lng}`);
+            const results = [];
+            
+            // 1. Try Nominatim (Fast, Local)
+            try {
+                const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&lat=${lat}&lon=${lng}&format=json&limit=5`;
+                const res = await axios.get(url, { headers: { 'User-Agent': 'NayaxaBot/1.1' }, timeout: 6000 });
+                if (res.data && res.data.length > 0) {
+                    res.data.forEach(p => {
+                        const isLocal = Math.abs(parseFloat(p.lat) - lat) < 0.5; 
+                        if (isLocal) {
+                            results.push({
+                                name: p.display_name.split(',')[0],
+                                address: p.display_name,
+                                lat: p.lat,
+                                lng: p.lon,
+                                gmaps_url: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.display_name)}`
+                            });
+                        }
+                    });
+                }
+            } catch (e) { console.error('Nominatim Error:', e.message); }
+
+            // 2. Fallback to Resilience Internet Search
+            if (results.length === 0) {
+                console.log('[Nayaxa] Falling back to Internet Search for places...');
+                const searchRes = await nayaxaStandalone.searchInternet(`${query} terdekat`);
+                if (searchRes.results?.length > 0) {
+                    searchRes.results.slice(0, 3).forEach(r => {
+                        results.push({
+                            name: r.title,
+                            address: r.snippet,
+                            gmaps_url: r.link.includes('google.com/maps') ? r.link : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(r.title)}`
+                        });
+                    });
+                }
+            }
+
+            // 3. Failsafe: If STILL empty, provide a Direct Google Maps Search Link
+            if (results.length === 0) {
+                results.push({
+                    name: `Pencarian Google Maps: ${query}`,
+                    address: `Sila klik link ini untuk melihat hasil pencarian ${query} langsung di Google Maps sesuai posisi Anda.`,
+                    gmaps_url: `https://www.google.com/maps/search/${encodeURIComponent(query)}/@${lat},${lng},15z`
+                });
+            }
+
+            return results.slice(0, 5);
+        } catch (error) {
+            console.error('Nearby Places Critical Error:', error.message);
+            return [{
+                name: `Pencarian ${query}`,
+                address: `Saya mengalami kendala teknis dalam mengambil data otomatis, namun Anda bisa melihat peta di sini.`,
+                gmaps_url: `https://www.google.com/maps/search/${encodeURIComponent(query)}/@${lat},${lng},15z`
+            }];
+        }
+    },
+
     searchInternet: async (query) => {
         try {
             console.log(`[Nayaxa] Searching Internet (Free/Multi-Source) for: ${query}`);
@@ -188,11 +248,12 @@ const nayaxaStandalone = {
                     const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}&hl=id`;
                     const gRes = await axios.get(googleUrl, { headers: mobileHeaders, timeout: 15000 });
                     const $g = cheerio.load(gRes.data);
-                    $g('a').each((i, el) => {
-                        const title = $g(el).find('div').first().text() || $g(el).text();
-                        const link = $g(el).attr('href');
+                    $g('div.ZIN6rb').each((i, el) => {
+                        const title = $g(el).find('div.vv77S').text() || $g(el).find('h3').text();
+                        const link = $g(el).find('a').attr('href');
+                        const snippet = $g(el).find('div.s3v9rd').text() || $g(el).find('div.VwiC3b').text();
                         if (title && link && link.startsWith('http') && !link.includes('google.com')) {
-                            results.push({ source: 'Google', title: title.trim(), snippet: 'Lihat selengkapnya di web...', link });
+                            results.push({ source: 'Google', title: title.trim(), snippet: snippet.trim() || 'Lihat web...', link });
                         }
                     });
                 } catch (err) { console.error('Google Error:', err.message); }
@@ -206,17 +267,16 @@ const nayaxaStandalone = {
                     $('.b_algo, li.b_ans').each((i, el) => {
                         const title = $(el).find('h2, .b_title').text();
                         let link = $(el).find('a').attr('href');
-                        const snippet = $(el).find('.b_caption p, .b_algo_snippet').text();
+                        const snippet = $(el).find('.b_caption p, .b_algo_snippet, .b_lineclamp3, .b_vlist2col').text();
                         if (title && link && link.startsWith('http') && !link.includes('bing.com')) {
-                            results.push({ source: 'Bing', title: title.trim(), snippet: snippet.trim() || 'No snippet', link });
+                            results.push({ source: 'Bing', title: title.trim(), snippet: snippet.trim() || 'Klik untuk detail', link });
                         }
                     });
                 } catch (err) { console.error('Bing Error:', err.message); }
             };
 
-            // Force Exact Match for the name
-            const exactQuery = `"${query}"`;
-            await Promise.all([scrapeGoogle(exactQuery), scrapeBing(exactQuery)]);
+            // Use the direct query (don't force quotes, let AI decide)
+            await Promise.all([scrapeGoogle(query), scrapeBing(query)]);
 
             // Wikipedia (API)
             try {

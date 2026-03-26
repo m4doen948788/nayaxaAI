@@ -53,6 +53,7 @@ const nayaxaController = {
             const now = new Date();
             const month = now.getMonth() + 1;
             const year = now.getFullYear();
+            const fullDate = now.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
             const [stats, forecast, scoring, alerts, personalStats] = await Promise.all([
                 nayaxaStandalone.getPegawaiStatistics(instansi_id, month, year),
@@ -125,6 +126,7 @@ const nayaxaController = {
             const now = new Date();
             const month = now.getMonth() + 1;
             const year = now.getFullYear();
+            const fullDate = now.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
             const protocol = req.protocol;
             const host = req.get('host');
@@ -132,13 +134,15 @@ const nayaxaController = {
 
             if (process.env.DEEPSEEK_ENABLED === 'true' && !fileBase64) {
                 brain = 'DeepSeek';
-                responseText = await nayaxaDeepSeek.chatWithNayaxa(message, '', instansi_id, month, year, history, user_name, profil_id, baseUrl);
+                responseText = await nayaxaDeepSeek.chatWithNayaxa(message, '', instansi_id, month, year, history, user_name, profil_id, baseUrl, fullDate);
             } else {
-                responseText = await nayaxaGemini.chatWithNayaxa(message, fileBase64, fileMimeType, instansi_id, month, year, history, user_name, profil_id, '', '', '', baseUrl);
+                responseText = await nayaxaGemini.chatWithNayaxa(message, fileBase64, fileMimeType, instansi_id, month, year, history, user_name, profil_id, '', '', '', baseUrl, fullDate);
             }
 
             // 4. Save & Cache Response
-            const contentToSave = responseText.replace(/\[NAYAXA_CHART\][\s\S]*?\[\/NAYAXA_CHART\]/g, '[Grafik]');
+            const contentToSave = responseText
+                .replace(/\[NAYAXA_CHART\][\s\S]*?\[\/NAYAXA_CHART\]/g, '[Grafik]')
+                .replace(/\[ACTION:REQUEST_LOCATION\]/g, '');
             await dbNayaxa.query(
                 'INSERT INTO nayaxa_chat_history (app_id, user_id, session_id, role, content, brain_used) VALUES (?, ?, ?, ?, ?, ?)', 
                 [app_id, user_id, activeSessionId, 'model', contentToSave, brain]

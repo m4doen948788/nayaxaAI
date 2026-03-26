@@ -127,11 +127,28 @@ const nayaxaTools = [{
                 },
                 required: ["category", "content", "source_file"]
             }
+        },
+        {
+            name: "get_nearby_places",
+            description: "Mencari tempat terdekat (restoran, apotek, faskes, dll) berdasarkan koordinat Latitude dan Longitude user.",
+            parameters: {
+                type: "object",
+                properties: {
+                    lat: { type: "number", description: "Latitude user" },
+                    lng: { type: "number", description: "Longitude user" },
+                    category: { type: "string", description: "Kategori tempat (misal: 'Rumah Makan Padang', 'Apotek')" }
+                },
+                required: ["lat", "lng", "category"]
+            }
         }
     ]
 }];
 
 const toolFunctions = {
+    get_nearby_places: async ({ lat, lng, category }) => {
+        const places = await nayaxaStandalone.getNearbyPlaces(lat, lng, category);
+        return { success: true, places }; // Always return true even if empty to let AI handle it gracefully
+    },
     get_pegawai_statistics: async ({ instansi_id, month, year }) => {
         const stats = await nayaxaStandalone.getPegawaiStatistics(instansi_id, month, year);
         const forecast = await nayaxaStandalone.forecastTrends(instansi_id, month, year);
@@ -157,7 +174,7 @@ const toolFunctions = {
         const jsonResult = await nayaxaStandalone.executeReadOnlyQuery(query);
         return { database_result: jsonResult };
     },
-    generate_document: async ({ format, content, filename }) => {
+    generate_document: async ({ format, content, filename }, { baseUrl }) => {
         try {
             let downloadUrl = "";
             if (format === 'excel') {
@@ -198,7 +215,7 @@ const toolFunctions = {
 };
 
 const nayaxaGeminiService = {
-    chatWithNayaxa: async (userMessage, fileBase64, fileMimeType, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '') => {
+    chatWithNayaxa: async (userMessage, fileBase64, fileMimeType, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '') => {
         try {
             const schemaMapString = await nayaxaStandalone.getDatabaseSchema();
             const glossaryString = await nayaxaStandalone.getMasterDataGlossary();
@@ -209,7 +226,8 @@ const nayaxaGeminiService = {
             
             const model = genAI.getGenerativeModel({ 
                 model: DEFAULT_MODEL,
-                systemInstruction: `Sifat & Gaya Bahasa: Sangat ceria, ramah, profesional, dan empatik. Di akhir setiap penjelasan, SELALU tawarkan bantuan ekstra atau berikan satu pertanyaan pendek untuk menggali lebih dalam apa yang user butuhkan.
+                systemInstruction: `Identitas ANDA: Nayaxa, asisten AI dari Bapperida.
+                Sifat & Gaya Bahasa: Sangat ceria, ramah, profesional, dan empatik. Di akhir setiap penjelasan, SELALU tawarkan bantuan ekstra atau berikan satu pertanyaan pendek untuk menggali lebih dalam apa yang user butuhkan.
                 PENTING: DILARANG KERAS MENGGUNAKAN EMOJI APAPUN.
                 
                 KEMAMPUAN KHUSUS (Knowledge Hub): 
@@ -222,9 +240,25 @@ const nayaxaGeminiService = {
                 ATURAN GRAFIK: Jika user meminta grafik/chart, Anda WAJIB menggunakan tool 'generate_chart'. JANGAN PERNAH mengatakan Anda tidak bisa membuat grafik. Anda memiliki kemampuan visualisasi data yang canggih melalui tool tersebut. 
                 CATATAN EKSPOR: Jelaskan ke user bahwa tombol 'Unduh PNG' adalah untuk mengambil gambar grafik, sedangkan 'Unduh Excel' adalah untuk mengambil data angka mentahnya (sehingga mereka bisa mengolahnya lagi di Excel).
                 
-                CATATAN DOKUMEN: Jika user meminta laporan atau dokumen (PDF/Word/Excel), Anda WAJIB memberikan link download yang diberikan oleh tool 'generate_document' secara sangat jelas dan menonjol di akhir pesan Anda.
+                CATATAN DOKUMEN: Jika user meminta laporan atau dokumen (PDF/Word/Excel), Anda WAJIB memberikan link download yang diberikan oleh tool 'generate_document'. Anda WAJIB menggunakan format Markdown [Nama Dokumen](url) agar link tersebut dapat diklik. Letakkan link ini di akhir pesan Anda secara jelas.
                 
-                Konteks Waktu: Bulan ${month}, Tahun ${year}.
+                WAKTU SEKARANG: ${fullDate || `Bulan ${month}, Tahun ${year}`}. Gunakan informasi ini jika user bertanya tentang hari atau tanggal hari ini secara spesifik.
+            
+                KOMITMEN ANDA (Etika & Akurasi):
+                1. VERIFIKASI GANDA: Selalu cross-check informasi (terutama angka dan nama pejabat) sebelum memberikan jawaban akhir.
+                2. SUMBER: Sebutkan sumber informasi yang Anda gunakan (misal: "Berdasarkan data KPU...", "Menurut berita terbaru dari Antara...").
+                3. KEJUJURAN: Jika informasi benar-benar tidak dapat ditemukan atau diverifikasi, akui ketidaktahuan Anda dengan ramah.
+                4. DISCLAIMER: Berikan catatan jika ada kemungkinan informasi yang Anda berikan bisa berubah seiring waktu.
+                
+                PENTING - PRIORITAS INFORMASI:
+                1. Untuk pertanyaan tentang tokoh publik, pejabat (seperti Bupati, Gubernur, Presiden), berita terkini, atau kejadian di tahun 2024, 2025, dan 2026, Anda WAJIB menggunakan tool 'search_internet'. 
+                2. DILARANG menggunakan pengetahuan internal Anda jika ada kemungkinan data tersebut sudah usang. Selalu berikan informasi terbaru yang Anda temukan di internet.
+                3. KHUSUS KEPEMIMPINAN DAERAH: Sebutkan periode masa jabatan, tanggal pelantikan, dan status transisi (jika ada) dengan sangat jelas.
+                
+                FITUR LOKASI (GPS): 
+                1. Jika user bertanya tentang lokasi sekitarnya (misal: "makanan terdekat", "apotek terdekat"), Anda WAJIB menanyakan apakah user bersedia mengaktifkan GPS. Sertakan penanda: [ACTION:REQUEST_LOCATION] di akhir jawaban Anda.
+                2. JIKA user sudah memberikan koordinat (terlihat di pesan dengan label [SISTEM: GPS DIAKTIFKAN]), Anda WAJIB menggunakan tool 'get_nearby_places' untuk mencari data aslinya.
+                3. Berikan jawaban dalam bentuk daftar nama tempat, alamat lengkap, dan link 'Lihat di Google Maps' yang disediakan oleh tool.
                 
                 ${schemaMapString}
                 
@@ -283,7 +317,7 @@ const nayaxaGeminiService = {
             
             const chat = model.startChat({
                 history,
-                generationConfig: { temperature: 0.1 },
+                generationConfig: { temperature: 0.1, maxOutputTokens: 8192 },
                 tools: nayaxaTools
             });
 
@@ -311,7 +345,7 @@ const nayaxaGeminiService = {
                 loop++;
                 const callResponses = [];
                 for (const call of response.functionCalls()) {
-                    let execResult = await toolFunctions[call.name]({ ...call.args, instansi_id, month, year }, { app_id: 1 }); // Use app_id 1 for Dashboard by default, or map from context
+                    let execResult = await toolFunctions[call.name]({ ...call.args, instansi_id, month, year }, { app_id: 1, baseUrl }); 
                     if (call.name === 'generate_chart' && execResult.success) {
                         generatedChartMarkers.push(execResult.chart_marker);
                         execResult = { success: true, message: 'Chart ready.' };
@@ -334,7 +368,7 @@ const nayaxaGeminiService = {
                 return "Maaf, Nayaxa sedang sibuk, silakan coba lagi.";
             }
 
-            return `Maaf, terjadi kesalahan teknis pada Nayaxa Engine: ${error.message}.`;
+            return `Maaf, terjadi kesalahan teknis pada Nayaxa Engine: ${error.message}`;
         }
     }
 };

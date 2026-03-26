@@ -20,7 +20,7 @@ const toolFunctions = {
     search_database: async ({ query }) => { // Map AI-hallucinated name
         return await toolFunctions.execute_sql_query({ query });
     },
-    generate_document: async ({ format, content, filename }) => {
+    generate_document: async ({ format, content, filename, baseUrl }) => {
         try {
             let downloadUrl = "";
             if (format === 'excel') {
@@ -30,7 +30,7 @@ const toolFunctions = {
             } else if (format === 'word') {
                 downloadUrl = await exportService.generateWord(content, filename);
             }
-            const fullUrl = downloadUrl.startsWith('http') ? downloadUrl : `${args.baseUrl}${downloadUrl}`;
+            const fullUrl = downloadUrl.startsWith('http') ? downloadUrl : `${baseUrl}${downloadUrl}`;
             return { success: true, download_url: fullUrl, message: `File ${format.toUpperCase()} siap: ${fullUrl}. ANDA WAJIB MEMBERIKAN LINK INI KEPADA USER AGAR MEREKA BISA MENDOWNLOADNYA.` };
         } catch (err) {
             return { success: false, error: err.message };
@@ -128,7 +128,7 @@ const DEEPSEEK_TOOLS = [
 ];
 
 const nayaxaDeepSeekService = {
-    chatWithNayaxa: async (userMessage, fileContext, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, baseUrl = '') => {
+    chatWithNayaxa: async (userMessage, fileContext, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, baseUrl = '', fullDate = '') => {
         try {
             const apiKey = process.env.DEEPSEEK_API_KEY;
             const schemaMapString = await nayaxaStandalone.getDatabaseSchema();
@@ -141,9 +141,21 @@ const nayaxaDeepSeekService = {
             
             ATURAN GRAFIK: Jika user meminta grafik/chart, Anda WAJIB menggunakan tool 'generate_chart'. JANGAN PERNAH memberikan kode Python atau CSV mentah. Gunakan tool tersebut untuk membuat visualisasi interaktif.
             CATATAN EKSPOR: Jelaskan ke user bahwa tombol 'Unduh PNG' adalah untuk mengambil gambar grafik, sedangkan 'Unduh Excel' adalah untuk mengambil data angka mentahnya agar mereka bisa mengolahnya lagi di Excel.
-            CATATAN DOKUMEN: Jika user meminta laporan atau dokumen (PDF/Word/Excel), Anda WAJIB memberikan link download yang diberikan oleh tool 'generate_document' secara sangat jelas dan menonjol di akhir pesan Anda.
+            CATATAN DOKUMEN: Jika user meminta laporan atau dokumen (PDF/Word/Excel), Anda WAJIB memberikan link download yang diberikan oleh tool 'generate_document'. Anda WAJIB menggunakan format Markdown [Nama Dokumen](url) agar link tersebut dapat diklik. Letakkan link ini di akhir pesan Anda secara jelas.
             
-            Waktu: Bulan ${month}, Tahun ${year}.
+            WAKTU SEKARANG: ${fullDate || `Bulan ${month}, Tahun ${year}`}. Gunakan informasi ini jika user bertanya tentang hari atau tanggal hari ini secara spesifik.
+            
+            KOMITMEN ANDA (Etika & Akurasi):
+            1. VERIFIKASI GANDA: Selalu cross-check informasi (terutama angka dan nama pejabat) sebelum memberikan jawaban akhir.
+            2. SUMBER: Sebutkan sumber informasi yang Anda gunakan.
+            3. KEJUJURAN: Jika informasi tidak dapat diverifikasi, akui ketidaktahuan Anda dengan ramah.
+            4. DISCLAIMER: Berikan catatan jika ada kemungkinan informasi sudah berubah.
+            
+            PENTING - PRIORITAS INFORMASI:
+            1. Untuk pertanyaan tentang tokoh publik, pejabat, berita terkini, atau kejadian di tahun 2024-2026, UTAMAKAN data hasil pencarian internet.
+            2. KHUSUS KEPEMIMPINAN DAERAH: Sebutkan periode masa jabatan, tanggal pelantikan, dan status transisi dengan jelas.
+            
+            FITUR LOKASI (GPS): Jika user bertanya tentang lokasi sekitarnya (misal: "makanan terdekat", "apotek terdekat", "posisi saya"), Anda WAJIB menanyakan apakah user bersedia mengaktifkan GPS. Jika user setuju atau bertanya hal terkait lokasi, sertakan penanda berikut di akhir jawaban Anda: [ACTION:REQUEST_LOCATION] agar sistem dapat mengambil koordinat user.
             
             ${schemaMapString}`;
             
@@ -165,7 +177,8 @@ const nayaxaDeepSeekService = {
                     model: "deepseek-chat",
                     messages: msgs,
                     tools: DEEPSEEK_TOOLS,
-                    temperature: 0.1
+                    temperature: 0.1,
+                    max_tokens: 8192
                 }, { headers: { 'Authorization': `Bearer ${apiKey}` } });
             };
 
@@ -219,7 +232,7 @@ const nayaxaDeepSeekService = {
             if (error.response?.status === 429 || error.message?.includes('429')) {
                 return "Maaf, Nayaxa sedang sibuk, silakan coba lagi.";
             }
-            return "Maaf, terjadi gangguan saat Nayaxa memproses data.";
+            return `Maaf, terjadi gangguan saat Nayaxa memproses data: ${error.message}`;
         }
     }
 };

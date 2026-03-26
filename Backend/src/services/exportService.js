@@ -38,14 +38,42 @@ const exportService = {
 
     generatePDF: async (content, filename = 'laporan.pdf') => {
         return new Promise((resolve, reject) => {
-            const doc = new PDFDocument();
+            const doc = new PDFDocument({ margin: 50, bufferPages: true });
             const safe = filename.endsWith('.pdf') ? filename : `${filename}.pdf`;
             const p = path.join(EXPORT_DIR, safe);
             const s = fs.createWriteStream(p);
+            
             doc.pipe(s);
-            doc.fontSize(18).text('Nayaxa Report', { align: 'center' });
-            doc.moveDown();
-            doc.fontSize(12).text(content);
+            
+            // Header
+            doc.fontSize(20).fillColor('#4f46e5').text('NAYAXA AI - STRATEGY REPORT', { align: 'center' });
+            doc.fontSize(10).fillColor('#64748b').text(`Dibuat pada: ${new Date().toLocaleString('id-ID')}`, { align: 'center' });
+            doc.moveDown(2);
+            
+            // Content
+            const cleanContent = content
+                .replace(/\*\*/g, '') // Remove bold asterisks
+                .replace(/^#+\s/gm, '') // Remove header hashes at start of line
+                .replace(/\n#+\s/g, '\n'); // Remove header hashes after newline
+            
+            doc.fontSize(12).fillColor('#1e293b').text(cleanContent, {
+                align: 'justify',
+                indent: 20,
+                lineGap: 5
+            });
+            
+            // Footer
+            const range = doc.bufferedPageRange(); 
+            for (let i = range.start; i < range.start + range.count; i++) {
+                doc.switchToPage(i);
+                doc.fontSize(8).fillColor('#94a3b8').text(
+                    `Nayaxa AI Engine v1.0 - Halaman ${i + 1}`,
+                    50, 
+                    doc.page.height - 50,
+                    { align: 'center' }
+                );
+            }
+
             doc.end();
             s.on('finish', () => resolve(`/uploads/exports/${safe}`));
             s.on('error', reject);
