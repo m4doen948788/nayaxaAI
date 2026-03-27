@@ -84,7 +84,7 @@ const proactiveController = {
 
             // Generate a very short proactive insight using Gemini
             const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+            const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
             
             const prompt = `Anda adalah ${persona.name}, ${persona.role}. 
             Gaya bicara Anda: ${persona.style}.

@@ -8,6 +8,14 @@ const pool = mysql.createPool({
     database: process.env.NAYAXA_DB_NAME,
     waitForConnections: true,
     connectionLimit: 10,
+    dateStrings: true,
+});
+
+pool.on('error', (err) => {
+    console.error('[MySQL Pool Error] dbNayaxa:', err.message);
+    if (err.code === 'PROTOCOL_CONNECTION_LOST' || err.code === 'ECONNRESET') {
+        console.warn('[MySQL] Connection lost/reset. Re-attempt will happen on next query.');
+    }
 });
 
 module.exports = pool;

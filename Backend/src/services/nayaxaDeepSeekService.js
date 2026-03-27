@@ -81,8 +81,15 @@ const parseDSML = (text) => {
 };
 
 const DEEPSEEK_TOOLS = [
-    { type: "function", function: { name: "execute_sql_query", description: "Query SQL mentah untuk mengambil data dashboard.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
-    { type: "function", function: { name: "search_internet", description: "Cari internet", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
+    { 
+        type: "function", 
+        function: { 
+            name: "execute_sql_query", 
+            description: "Query SQL mentah untuk mengambil data dashboard. PENTING: Anda WAJIB menyertakan filter instansi_id (sesuai profil user) di setiap query untuk menjaga akurasi data.", 
+            parameters: { type: "object", properties: { query: { type: "string", description: "Query SQL SELECT. Gunakan JOIN jika perlu." } }, required: ["query"] } 
+        } 
+    },
+    { type: "function", function: { name: "search_internet", description: "Cari internet menggunakan Polyglot Search (Resilience Mode).", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
     { type: "function", function: { 
         name: "generate_chart", 
         description: "Membuat grafik/chart interaktif.", 
@@ -146,10 +153,14 @@ const nayaxaDeepSeekService = {
             WAKTU SEKARANG: ${fullDate || `Bulan ${month}, Tahun ${year}`}. Gunakan informasi ini jika user bertanya tentang hari atau tanggal hari ini secara spesifik.
             
             KOMITMEN ANDA (Etika & Akurasi):
-            1. VERIFIKASI GANDA: Selalu cross-check informasi (terutama angka dan nama pejabat) sebelum memberikan jawaban akhir.
-            2. SUMBER: Sebutkan sumber informasi yang Anda gunakan.
-            3. KEJUJURAN: Jika informasi tidak dapat diverifikasi, akui ketidaktahuan Anda dengan ramah.
-            4. DISCLAIMER: Berikan catatan jika ada kemungkinan informasi sudah berubah.
+            1. VERIFIKASI GANDA: Selalu cross-check informasi (terutama angka dan nama pejabat). Periksa hasil tool call dengan teliti sebelum menyimpulkan.
+            2. SUMBER: Sebutkan sumber data (Pencarian Internet atau Database Internal).
+            3. KEJUJURAN: Jika informasi tidak dapat diverifikasi atau data kosong, akui dengan ramah dan tawarkan bantuan lain.
+            4. DISCLAIMER: Berikan catatan jika informasi bersifat dinamis atau transisi.
+            
+            PENTING - AKURASI DATA INTERNAL:
+            1. MULTI-TENANCY: Anda sedang melayani user dari Instansi ID: ${instansi_id}. Saat membuat SQL query, Anda WAJIB memfilter hasil berdasarkan instansi_id kolom yang sesuai (misal: p.instansi_id = ${instansi_id}) di tabel profil_pegawai, kegiatan_harian, atau tabel lain yang relevan. Jangan pernah menampilkan data dari instansi lain!
+            2. NAMA & BIDANG: Jika user bertanya tentang pegawai di bidang tertentu (misal: PPM), cari dulu ID atau nama bidang yang sesuai di tabel 'master_bidang_instansi' menggunakan JOIN.
             
             PENTING - PRIORITAS INFORMASI:
             1. Untuk pertanyaan tentang tokoh publik, pejabat, berita terkini, atau kejadian di tahun 2024-2026, UTAMAKAN data hasil pencarian internet.

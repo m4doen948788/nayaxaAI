@@ -12,6 +12,31 @@ const applyInstansiFilter = (alias, instansi_id) => {
 };
 
 const nayaxaStandalone = {
+    getPersonalStatistics: async (profil_id, month, year) => {
+        try {
+            const [activities] = await pool.query(`
+                SELECT tipe_kegiatan, COUNT(*) as total_kegiatan
+                FROM kegiatan_harian_pegawai
+                WHERE profil_pegawai_id = ? AND MONTH(tanggal) = ? AND YEAR(tanggal) = ?
+                GROUP BY tipe_kegiatan
+                ORDER BY total_kegiatan DESC
+            `, [profil_id, month, year]);
+
+            const [total] = await pool.query(`
+                SELECT COUNT(*) as total
+                FROM kegiatan_harian_pegawai
+                WHERE profil_pegawai_id = ? AND MONTH(tanggal) = ? AND YEAR(tanggal) = ?
+            `, [profil_id, month, year]);
+
+            return {
+                personal_total_kegiatan: total[0].total || 0,
+                personal_activity_breakdown: activities
+            };
+        } catch (error) {
+            console.error('Error in getPersonalStatistics:', error);
+            throw error;
+        }
+    },
 
     getPegawaiStatistics: async (instansi_id, month, year) => {
         try {
@@ -232,12 +257,12 @@ const nayaxaStandalone = {
 
     searchInternet: async (query) => {
         try {
-            console.log(`[Nayaxa] Searching Internet (Free/Multi-Source) for: ${query}`);
+            console.log(`[Nayaxa] Searching Internet (Polyglot Search - Resilience) for: ${query}`);
             const results = [];
             const cheerio = require('cheerio');
 
             const mobileHeaders = {
-                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
                 'Cache-Control': 'no-cache'
@@ -245,40 +270,87 @@ const nayaxaStandalone = {
 
             const scrapeGoogle = async (searchQuery) => {
                 try {
-                    const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}&hl=id`;
-                    const gRes = await axios.get(googleUrl, { headers: mobileHeaders, timeout: 15000 });
+                    const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}&hl=id&gl=id`;
+                    const gRes = await axios.get(googleUrl, { headers: mobileHeaders, timeout: 12000 });
                     const $g = cheerio.load(gRes.data);
-                    $g('div.ZIN6rb').each((i, el) => {
-                        const title = $g(el).find('div.vv77S').text() || $g(el).find('h3').text();
-                        const link = $g(el).find('a').attr('href');
-                        const snippet = $g(el).find('div.s3v9rd').text() || $g(el).find('div.VwiC3b').text();
+                    
+                    // Improved Selectors for modern Google Mobile Results
+                    $g('div.ZIN6rb, div.MjjYud').each((i, el) => {
+                        const title = $g(el).find('div.vv77S, h3, div.BNeawe.vv77S.AP7Wnd').first().text();
+                        let link = $g(el).find('a').attr('href');
+                        const snippet = $g(el).find('div.s3v9rd, div.VwiC3b, div.BNeawe.s3v9rd.AP7Wnd').first().text();
+                        
+                        if (link && link.includes('/url?q=')) {
+                            link = decodeURIComponent(link.split('/url?q=')[1].split('&')[0]);
+                        }
+
                         if (title && link && link.startsWith('http') && !link.includes('google.com')) {
-                            results.push({ source: 'Google', title: title.trim(), snippet: snippet.trim() || 'Lihat web...', link });
+                            results.push({ source: 'Google', title: title.trim(), snippet: snippet.trim() || 'Lihat detail di web...', link });
                         }
                     });
-                } catch (err) { console.error('Google Error:', err.message); }
+                } catch (err) { console.error('Google Scrape Error:', err.message); }
             };
 
             const scrapeBing = async (searchQuery) => {
                 try {
                     const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(searchQuery)}&setlang=id`;
-                    const response = await axios.get(searchUrl, { headers: mobileHeaders, timeout: 15000 });
+                    const response = await axios.get(searchUrl, { headers: mobileHeaders, timeout: 12000 });
                     const $ = cheerio.load(response.data);
                     $('.b_algo, li.b_ans').each((i, el) => {
                         const title = $(el).find('h2, .b_title').text();
                         let link = $(el).find('a').attr('href');
                         const snippet = $(el).find('.b_caption p, .b_algo_snippet, .b_lineclamp3, .b_vlist2col').text();
                         if (title && link && link.startsWith('http') && !link.includes('bing.com')) {
-                            results.push({ source: 'Bing', title: title.trim(), snippet: snippet.trim() || 'Klik untuk detail', link });
+                            results.push({ source: 'Bing', title: title.trim(), snippet: snippet.trim() || 'Klik untuk detail selengkapnya.', link });
                         }
                     });
-                } catch (err) { console.error('Bing Error:', err.message); }
+                } catch (err) { console.error('Bing Scrape Error:', err.message); }
             };
 
-            // Use the direct query (don't force quotes, let AI decide)
-            await Promise.all([scrapeGoogle(query), scrapeBing(query)]);
+            const scrapeDDG = async (searchQuery) => {
+                try {
+                    // DuckDuckGo HTML version is more friendly to scrappers
+                    const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`;
+                    const res = await axios.get(ddgUrl, { headers: mobileHeaders, timeout: 10000 });
+                    const $ = cheerio.load(res.data);
+                    $('.links_main.result__body').each((i, el) => {
+                        const title = $(el).find('.result__title').text().trim();
+                        const link = $(el).find('.result__url').attr('href')?.trim();
+                        const snippet = $(el).find('.result__snippet').text().trim();
+                        if (title && link && !link.includes('duckduckgo.com')) {
+                            const fullLink = link.startsWith('http') ? link : `https:${link}`;
+                            results.push({ source: 'DuckDuckGo', title, snippet: snippet || 'Info lebih lanjut...', link: fullLink });
+                        }
+                    });
+                } catch (err) { 
+                    console.error('DDG Scrape Error:', err.message);
+                    if (err.message.includes('altnames') || err.message.includes('ECONNRESET')) {
+                        console.warn('[Nayaxa] DuckDuckGo restricted by local network filter (Internet Positif). Skipping...');
+                    }
+                }
+            };
 
-            // Wikipedia (API)
+            // Query Multiplier / Automatic Improvement
+            // If the query is just a name or a singular topic, we expand it.
+            let queriesToTry = [query];
+            if (!query.includes(' ') || query.length < 15) {
+                queriesToTry.push(`${query} profil`);
+                queriesToTry.push(`${query} data terbaru`);
+            } else if (query.toLowerCase().includes('siapa') || query.toLowerCase().includes('apa')) {
+                queriesToTry.push(query.replace(/siapa|apa/i, '').trim() + " 2024 2025 2026");
+            }
+
+            // Execute all search sources
+            const searchPromises = [];
+            queriesToTry.forEach(q => {
+                searchPromises.push(scrapeGoogle(q));
+                searchPromises.push(scrapeBing(q));
+                searchPromises.push(scrapeDDG(q));
+            });
+
+            await Promise.all(searchPromises);
+
+            // Wikipedia (API) - Use the original query
             try {
                 const wikiRes = await axios.get(`https://id.wikipedia.org/w/api.php`, {
                     params: { action: 'query', format: 'json', list: 'search', srsearch: query, srlimit: 3 },
@@ -293,31 +365,48 @@ const nayaxaStandalone = {
 
             const keywordMatch = (text) => {
                 const words = query.toLowerCase().split(' ').filter(w => w.length > 2);
+                if (words.length === 0) return true;
+                // Resilience: At least one word must match, or many words (smart match)
                 return words.some(w => text.toLowerCase().includes(w));
             };
 
             const filteredResults = [];
             const seenLinks = new Set();
             for (const res of results) {
-                if (!seenLinks.has(res.link) && (keywordMatch(res.title + res.snippet) || res.source === 'Wikipedia')) {
-                    seenLinks.add(res.link);
-                    filteredResults.push(res);
+                if (!seenLinks.has(res.link)) {
+                    // Check for quality snippets (avoiding bot block messages)
+                    const isBotBlock = res.snippet.toLowerCase().includes('please click here') || 
+                                     res.snippet.toLowerCase().includes('trouble accessing') ||
+                                     res.snippet.toLowerCase().includes('detecting unusual traffic');
+                    
+                    if (!isBotBlock && (keywordMatch(res.title + res.snippet) || res.source === 'Wikipedia' || res.source === 'DuckDuckGo')) {
+                        seenLinks.add(res.link);
+                        filteredResults.push(res);
+                    }
                 }
             }
 
+            if (filteredResults.length === 0 && results.length > 0) {
+                 // If everything was filtered but we have results, maybe we were too strict
+                 results.slice(0, 3).forEach(r => filteredResults.push(r));
+            }
+
             if (filteredResults.length === 0) {
-                return { message: "Maaf, hasil pencarian akurat tidak ditemukan di server ini. Hal ini mungkin disebabkan oleh pembatasan akses internet pada infrastruktur server." };
+                return { 
+                    success: false,
+                    message: "Maaf, Nayaxa mengalami kendala saat mengakses informasi terkini dari internet (Resilience Mode aktif namun hasil nihil). Silakan coba dengan kata kunci lain." 
+                };
             }
 
             return { 
                 success: true, 
                 query,
                 results: filteredResults.slice(0, 5),
-                search_engine_used: 'Polyglot Search (Resilience Mode)'
+                search_engine_used: 'Polyglot Search (Resilience Mode + Redundant Sources)'
             };
         } catch (error) {
             console.error('Search Critical Error:', error.message);
-            return { error: "Terjadi gangguan koneksi internet pada server." };
+            return { error: "Terjadi gangguan koneksi internet pada server Nayaxa." };
         }
     }
 };
