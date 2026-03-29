@@ -132,9 +132,39 @@ const nayaxaController = {
             const host = req.get('host');
             const baseUrl = `${protocol}://${host}`;
 
-            if (process.env.DEEPSEEK_ENABLED === 'true' && !fileBase64) {
-                brain = 'DeepSeek';
-                responseText = await nayaxaDeepSeek.chatWithNayaxa(message, '', instansi_id, month, year, history, user_name, profil_id, baseUrl, fullDate);
+            if (process.env.DEEPSEEK_ENABLED === 'true') {
+                const isImageFile = fileMimeType && fileMimeType.startsWith('image/');
+                const isSpreadsheet = fileMimeType && (fileMimeType.includes('spreadsheetml') || fileMimeType.includes('excel') || fileMimeType.includes('csv') || fileMimeType.includes('officedocument.spreadsheetml.sheet'));
+                // DeepSeek-Chat does not currently support images. We pass them directly to Gemini
+                const isDeepSeekCompatible = !fileBase64 || isSpreadsheet;
+
+                if (isDeepSeekCompatible) {
+                    try {
+                        brain = 'DeepSeek';
+                        responseText = await nayaxaDeepSeek.chatWithNayaxa(
+                            message, '', instansi_id, month, year, history, user_name, profil_id, baseUrl, fullDate, fileBase64, fileMimeType
+                        );
+                    } catch (deepseekError) {
+                        const isRateLimit = deepseekError.response?.status === 429 || 
+                                            deepseekError.message?.includes('429') || 
+                                            deepseekError.message?.includes('quota');
+                        if (isRateLimit) {
+                            console.warn('[Nayaxa] DeepSeek RPM limit hit. Falling back to Gemini...');
+                            brain = 'Gemini (Fallback)';
+                            responseText = await nayaxaGemini.chatWithNayaxa(
+                                message, fileBase64, fileMimeType, instansi_id, month, year, history, user_name, profil_id, '', '', '', baseUrl, fullDate
+                            );
+                        } else {
+                            throw deepseekError;
+                        }
+                    }
+                } else {
+                    console.log(`[Nayaxa] File type ${fileMimeType} forwarded directly to Gemini.`);
+                    brain = 'Gemini';
+                    responseText = await nayaxaGemini.chatWithNayaxa(
+                        message, fileBase64, fileMimeType, instansi_id, month, year, history, user_name, profil_id, '', '', '', baseUrl, fullDate
+                    );
+                }
             } else {
                 responseText = await nayaxaGemini.chatWithNayaxa(message, fileBase64, fileMimeType, instansi_id, month, year, history, user_name, profil_id, '', '', '', baseUrl, fullDate);
             }

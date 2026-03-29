@@ -1,4 +1,5 @@
 const axios = require('axios');
+const XLSX = require('xlsx');
 const dbDashboard = require('../config/dbDashboard');
 const nayaxaStandalone = require('./nayaxaStandalone');
 const exportService = require('./exportService');
@@ -135,7 +136,7 @@ const DEEPSEEK_TOOLS = [
 ];
 
 const nayaxaDeepSeekService = {
-    chatWithNayaxa: async (userMessage, fileContext, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, baseUrl = '', fullDate = '') => {
+    chatWithNayaxa: async (userMessage, fileContext, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, baseUrl = '', fullDate = '', fileBase64 = null, fileMimeType = null) => {
         try {
             const apiKey = process.env.DEEPSEEK_API_KEY;
             const schemaMapString = await nayaxaStandalone.getDatabaseSchema();
@@ -154,22 +155,98 @@ const nayaxaDeepSeekService = {
             
             KOMITMEN ANDA (Etika & Akurasi):
             1. VERIFIKASI GANDA: Selalu cross-check informasi (terutama angka dan nama pejabat). Periksa hasil tool call dengan teliti sebelum menyimpulkan.
-            2. SUMBER: Sebutkan sumber data (Pencarian Internet atau Database Internal).
-            3. KEJUJURAN: Jika informasi tidak dapat diverifikasi atau data kosong, akui dengan ramah dan tawarkan bantuan lain.
-            4. DISCLAIMER: Berikan catatan jika informasi bersifat dinamis atau transisi.
+            2. LABEL SUMBER: Sebutkan sumber spesifik setiap informasi (misal: "Menurut detik.com [tanggal pencarian]..." atau "Berdasarkan data KPU resmi...").
+            3. LABEL KEPERCAYAAN: Jika hasil pencarian bertanda 'TERVERIFIKASI', sampaikan dengan yakin. Jika 'BELUM TERVERIFIKASI', berikan disclaimer: "Catatan: Informasi ini belum dapat diverifikasi dari sumber resmi. Harap konfirmasi langsung ke sumber terkait."
+            4. DISCLAIMER WAJIB: Berikan catatan jika informasi bersifat dinamis atau bisa berubah, terutama untuk kepemimpinan daerah periode transisi.
+            5. FALLBACK WAJIB: Jika data tidak tersedia atau tidak lengkap, SARANKAN USER untuk memeriksa sendiri sumber spesifik: id.wikipedia.org, pilkada2024.kpu.go.id, detik.com, kompas.com. (Misal: "Anda dapat mengecek lebih lanjut di id.wikipedia.org...").
+            6. TANGGAL PENCARIAN: Sebutkan search_date dari hasil tool saat menyampaikan informasi dari internet.
+            
+            ATURAN KOMUNIKASI PENTING (DILARANG BERPIKIR KERAS / INTERNAL MONOLOGUE):
+            - JANGAN PERNAH menjelaskan proses pencarian Anda kepada user (Contoh SALAH: "Mari saya cari di internet...", "Saya akan membuka halaman Wikipedia...", "Tunggu sebentar saya cek database...").
+            - LANGSUNG BERIKAN JAWABAN AKHIR dari hasil pencarian Anda, terlepas apakah data itu lengkap atau tidak.
+            - JANGAN PERNAH memberikan pesan menggantung tanpa konklusi.
             
             PENTING - AKURASI DATA INTERNAL:
             1. MULTI-TENANCY: Anda sedang melayani user dari Instansi ID: ${instansi_id}. Saat membuat SQL query, Anda WAJIB memfilter hasil berdasarkan instansi_id kolom yang sesuai (misal: p.instansi_id = ${instansi_id}) di tabel profil_pegawai, kegiatan_harian, atau tabel lain yang relevan. Jangan pernah menampilkan data dari instansi lain!
             2. NAMA & BIDANG: Jika user bertanya tentang pegawai di bidang tertentu (misal: PPM), cari dulu ID atau nama bidang yang sesuai di tabel 'master_bidang_instansi' menggunakan JOIN.
             
-            PENTING - PRIORITAS INFORMASI:
-            1. Untuk pertanyaan tentang tokoh publik, pejabat, berita terkini, atau kejadian di tahun 2024-2026, UTAMAKAN data hasil pencarian internet.
-            2. KHUSUS KEPEMIMPINAN DAERAH: Sebutkan periode masa jabatan, tanggal pelantikan, dan status transisi dengan jelas.
+            PENTING - STRATEGI PENCARIAN (BACA DENGAN TELITI):
+            A. JIKA USER MENCARI ORANG BIASA ATAU TOKOH UMUM:
+               - JANGAN gunakan format pencarian pejabat/pelantikan.
+               - Cari profil, pendidikan, karir, profesi, atau medsos yang tersedia.
+               - Berikan ringkasan natural sesuai hasil yang didapat.
             
-            FITUR LOKASI (GPS): Jika user bertanya tentang lokasi sekitarnya (misal: "makanan terdekat", "apotek terdekat", "posisi saya"), Anda WAJIB menanyakan apakah user bersedia mengaktifkan GPS. Jika user setuju atau bertanya hal terkait lokasi, sertakan penanda berikut di akhir jawaban Anda: [ACTION:REQUEST_LOCATION] agar sistem dapat mengambil koordinat user.
+            B. JIKA USER MENCARI PEJABAT PUBLIK ATAU HASIL PILKADA:
+            1. PROTOKOL BERPIKIR (Wajib Diikuti secara urut):
+               - Verifikasi Temporal (Waktu): Pastikan tanggal hari ini adalah ${new Date().getFullYear()}. JANGAN gunakan / sebutkan data periode lama jika data hasil Pilkada terbaru (2025-2030) sudah ditemukan di hasil pencarian.
+               - SKEPTISISME PJ (ACTING): Di tahun 2026, Gubernur/Bupati/Walikota seharusnya adalah PEJABAT DEFINITIF terpilih hasil Pilkada 2024 (dilantik 20 Feb 2025). Jika hasil pencarian menyebutkan nama Penjabat (Pj), Plt, atau Pjs, periksa apakah ada nama lain yang berstatus "Terpilih" atau "Dilantik 2025". Jika ada, nama Pj tersebut adalah MANTAN/TIDAK LAGI MENJABAT.
+               - ANTI-HALUSINASI JABAR: Bey Machmudin adalah Penjabat (Pj). Dedi Mulyadi adalah yang Terpilih 2025-2030. JANGAN PERNAH menyebut Bey Machmudin sebagai pejabat "Terpilih" atau "Definitif" di Jawa Barat.
+               - Pencarian Bertingkat: 
+                 Tahap 1: Jelaskan status jabatan (Definitif vs Penjabat/Pj).
+                 Tahap 2: Identifikasi nama Kepala Daerah dan Wakilnya dengan gelar lengkap.
+                 Tahap 3: Sebutkan detail pelantikan (Tanggal, Tempat, dan Dilantik Oleh Siapa).
+               - Validasi Data: Sertakan statistik pendukung dari hasil pencarian (misal: persentase suara pemenangan) untuk meningkatkan kredibilitas, jika ada di hasil pencarian.
+               - Format Output: Gunakan Bullet Points untuk data teknis dan Bold Text untuk nama orang/lembaga penting.
+            
+            2. BATASAN JAWABAN PEJABAT PUBLIK:
+               - Jika data pelantikan ada di masa depan (belum dilantik), sebutkan statusnya dengan jelas sebagai "Kepala Daerah Terpilih".
+               - Hindari opini politik; fokus murni pada data administratif dan rekam jejak resmi.
+               
+            3. URUTAN PRIORITAS SUMBER (WAJIB DIIKUTI):
+               a. KPU resmi (pilkada2024.kpu.go.id)
+               b. Media besar utama (kompas.com / detik.com / cnnindonesia.com)
+               c. Situs pemerintah resmi (.go.id)
+               d. Wikipedia Indonesia (PRIORITAS TERENDAH - Sering Belum Diupdate)
+               
+            4. ELEMEN WAJIB DALAM JAWABAN (sertakan jika tersedia):
+               - Nama lengkap dengan gelar/titel.
+               - Periode jabatan (YYYY-YYYY).
+               - Tanggal pelantikan (jika ada).
+               - Nama wakil/deputy (jika ada).
+               - Status verifikasi sumber ('TERVERIFIKASI' atau 'BELUM TERVERIFIKASI').
+            4. STRATEGI FALLBACK BERTAHAP (jika hasil pertama kosong/tidak relevan):
+               - Coba query alternatif: "[Jabatan] [Daerah] terpilih"
+               - Kemudian: "Pemimpin [Daerah] periode [Tahun]"
+               - Terakhir: Sarankan user cek langsung id.wikipedia.org atau pilkada2024.kpu.go.id.
+            5. KHUSUS PERIODE TRANSISI 2024-2026: Sebutkan tanggal pelantikan dan status transisi kekuasaan dengan jelas.
+            6. KONTEKS PENTING (Wajib Diingat):
+               - Pilkada serentak telah dilaksanakan tahun 2024.
+               - Pelantikan serentak untuk Kepala Daerah terpilih adalah 20 Februari 2025.
+               - Masa jabatan mereka adalah 5 tahun (2025-2030).
+               - Jika menemukan nama tokoh yang dilantik pada/sekitar 20 Februari 2025, pastikan dia adalah pejabat terpilih yang sah untuk periode 2025-2030.
+               - PERINGATAN TOKOH TRANSISI: Hindari menyebut Hassanudin (Sumut), Iwan Setiawan (Bogor), Bey Machmudin (Jabar), atau Pj lainnya sebagai "Gubernur/Bupati Sekarang" jika ada data pelantikan Feb 2025 untuk Bobby Nasution (Sumut), Rudy Susmanto (Bogor), Dedi Mulyadi (Jabar), dsb.
+               - CALON TUNGGAL: JANGAN menyebut seseorang terpilih sebagai "Calon Tunggal" kecuali hasil pencarian secara eksplisit (dari KPU/Detik/Kompas) menyatakan demikian.
+            7. DILARANG menggunakan pengetahuan internal untuk data 2024, 2025, 2026. Selalu ambil dari internet.
+            
+            FITUR LOKASI (GPS): Jika user bertanya tentang lokasi sekitarnya, Anda WAJIB menanyakan apakah user bersedia mengaktifkan GPS. Sertakan penanda: [ACTION:REQUEST_LOCATION] di akhir jawaban Anda.
             
             ${schemaMapString}`;
             
+            // --- FILE PRE-PROCESSOR (Handle Excel/CSV) ---
+            if (fileBase64 && fileMimeType) {
+                const isExcel = fileMimeType.includes('spreadsheetml') || fileMimeType.includes('excel') || fileMimeType.includes('officedocument.spreadsheetml.sheet');
+                const isCSV = fileMimeType.includes('csv');
+                if (isExcel || isCSV) {
+                    try {
+                        console.log(`[DeepSeek] Pre-processing ${isExcel ? 'Excel' : 'CSV'} file...`);
+                        const cleanB64 = fileBase64.includes('base64,') ? fileBase64.split('base64,')[1] : fileBase64;
+                        const buffer = Buffer.from(cleanB64, 'base64');
+                        const workbook = XLSX.read(buffer, { type: 'buffer' });
+                        let sheetData = "";
+                        workbook.SheetNames.forEach(sheetName => {
+                            const sheet = workbook.Sheets[sheetName];
+                            const csv = XLSX.utils.sheet_to_csv(sheet);
+                            sheetData += `\n--- Sheet: ${sheetName} ---\n${csv}\n`;
+                        });
+                        fileContext = (fileContext ? fileContext + '\n\n' : '') + `DATA FILE (${isExcel ? 'EXCEL' : 'CSV'}):\n${sheetData}`;
+                        fileBase64 = null;
+                        fileMimeType = null;
+                    } catch (err) {
+                        console.error('DeepSeek File Pre-process Error:', err);
+                    }
+                }
+            }
+
             let messages = [{ role: "system", content: system }];
             let historyToUse = [...prevHistory];
             // DeepSeek Rule: Current message should NOT be in history when we push it explicitly at the end
@@ -181,7 +258,19 @@ const nayaxaDeepSeekService = {
                 const role = h.role === 'user' ? 'user' : 'assistant';
                 messages.push({ role, content: h.parts ? h.parts[0].text : h.content });
             });
-            messages.push({ role: "user", content: fileContext ? `${fileContext}\n\n${userMessage}` : userMessage });
+            const userTextPart = fileContext ? `${fileContext}\n\n${userMessage}` : userMessage;
+            if (fileBase64 && fileMimeType && fileMimeType.startsWith('image/')) {
+                const cleanBase64 = fileBase64.includes('base64,') ? fileBase64.split('base64,')[1] : fileBase64;
+                messages.push({
+                    role: "user",
+                    content: [
+                        { type: "text", text: userTextPart },
+                        { type: "image_url", image_url: { url: `data:${fileMimeType};base64,${cleanBase64}` } }
+                    ]
+                });
+            } else {
+                messages.push({ role: "user", content: userTextPart });
+            }
 
             const callDeepSeek = async (msgs) => {
                 return await axios.post('https://api.deepseek.com/v1/chat/completions', {

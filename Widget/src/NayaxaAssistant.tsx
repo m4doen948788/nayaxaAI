@@ -47,35 +47,17 @@ export default function NayaxaAssistant({
   const [showHistory, setShowHistory] = useState(false);
   const [lastBrainUsed, setLastBrainUsed] = useState<string | null>(null);
   const [thinkingBrain, setThinkingBrain] = useState<string | null>(null);
-  const [proactiveInsight, setProactiveInsight] = useState<{ topic: string, insight: string } | null>(null);
-  const [showInsight, setShowInsight] = useState(false);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileMimeType, setFileMimeType] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Proactive Insight
-  useEffect(() => {
-    if (!user || !isOpen) return;
-    const fetchProactive = async () => {
-      try {
-        const res = await api.getProactiveInsight({ 
-          current_page: window.location.pathname,
-          instansi_id: user.instansi_id 
-        });
-        if (res.success && res.insight) {
-          setProactiveInsight({ topic: res.topic, insight: res.insight });
-          setShowInsight(true);
-          setTimeout(() => setShowInsight(false), 15000);
-        }
-      } catch (err) { console.error('Proactive Insight Error:', err); }
-    };
-    fetchProactive();
-  }, [window.location.pathname, user?.id, isOpen]);
+
 
   useEffect(() => {
     if (isOpen) {
@@ -169,18 +151,43 @@ export default function NayaxaAssistant({
     }
   };
 
+  const handleFile = (file: File) => {
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) return alert('File terlalu besar (max 10MB)');
+    
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setSelectedFile(reader.result as string);
+      setFileMimeType(file.type);
+      setFileName(file.name);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 10 * 1024 * 1024) return alert('File terlalu besar (max 10MB)');
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setSelectedFile(reader.result as string);
-        setFileMimeType(file.type);
-        setFileName(file.name);
-      };
-      reader.readAsDataURL(file);
-    }
+    if (file) handleFile(file);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleFile(file);
   };
 
   useEffect(() => {
@@ -227,20 +234,27 @@ export default function NayaxaAssistant({
 
             {!isMinimized && (
               <div className="flex-1 flex flex-col bg-slate-50 overflow-hidden relative">
-                <AnimatePresence>
-                  {showInsight && (
-                    <motion.div initial={{ y: -20 }} animate={{ y: 10 }} exit={{ y: -20 }} className="absolute top-0 left-4 right-4 z-10 bg-indigo-600 text-white p-3 rounded-xl text-xs flex gap-3 shadow-lg border border-indigo-400">
-                      <Bot size={18} className="shrink-0" />
-                      <div className="flex-1">
-                        <div className="opacity-70 text-[10px] uppercase font-bold">{proactiveInsight?.topic}</div>
-                        <div>{proactiveInsight?.insight}</div>
-                      </div>
-                      <button onClick={() => setShowInsight(false)}><X size={14} /></button>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
 
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+                <div 
+                  className="flex-1 overflow-y-auto p-4 space-y-4 relative"
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                >
+                  <AnimatePresence>
+                    {isDragging && (
+                      <motion.div 
+                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        className="absolute inset-0 z-[30] bg-indigo-600/10 border-2 border-dashed border-indigo-600 rounded-xl m-2 flex flex-col items-center justify-center text-indigo-600 pointer-events-none"
+                      >
+                        <div className="bg-white p-4 rounded-2xl shadow-lg flex flex-col items-center gap-2">
+                           <Plus size={32} className="animate-bounce" />
+                           <span className="text-sm font-bold">Lepaskan file untuk unggah</span>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                   {messages.map((m, i) => (
                     <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                       <div className={`max-w-[85%] p-3 rounded-2xl text-[13px] ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none shadow-md shadow-indigo-100' : 'bg-white border rounded-tl-none shadow-sm'}`}>
