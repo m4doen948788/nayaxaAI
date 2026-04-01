@@ -4,7 +4,10 @@ const nayaxaController = require('../controllers/nayaxaController');
 const nayaxaKnowledgeController = require('../controllers/nayaxaKnowledgeController');
 const { verifyApiKey } = require('../middleware/apiKeyMiddleware');
 
-// All routes require an API Key
+// Public Export Download (For chat links)
+router.get('/export/:filename', nayaxaController.downloadExport);
+
+// All other routes require an API Key
 router.use(verifyApiKey);
 
 router.get('/dashboard-insights', nayaxaController.getDashboardInsights);

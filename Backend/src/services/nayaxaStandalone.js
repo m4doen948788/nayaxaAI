@@ -186,6 +186,20 @@ const nayaxaStandalone = {
         } catch (error) { return ""; }
     },
 
+    getInstansiName: async (instansi_id) => {
+        try {
+            if (!instansi_id) return 'N/A';
+            const [rows] = await pool.query('SELECT instansi, singkatan FROM master_instansi_daerah WHERE id = ?', [instansi_id]);
+            if (rows.length > 0) {
+                return rows[0].singkatan ? `${rows[0].instansi} (${rows[0].singkatan})` : rows[0].instansi;
+            }
+            return 'N/A';
+        } catch (error) {
+            console.error('Error in getInstansiName:', error);
+            return 'N/A';
+        }
+    },
+
     executeReadOnlyQuery: async (q) => {
         try {
             const up = q.trim().toUpperCase();
@@ -270,19 +284,23 @@ const nayaxaStandalone = {
             const randomUA = userAgents[Math.floor(Math.random() * userAgents.length)];
 
             const commonHeaders = {
-                'User-Agent': randomUA,
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
+                'Referer': 'https://www.google.com/',
+                'sec-ch-ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"Windows"',
                 'Sec-Fetch-Dest': 'document',
                 'Sec-Fetch-Mode': 'navigate',
                 'Sec-Fetch-Site': 'none',
                 'Sec-Fetch-User': '?1',
                 'Cache-Control': 'no-cache'
             };
+            // Use random UA if available, otherwise fallback to our premium header
+            if (typeof userAgents !== 'undefined' && userAgents.length > 0) {
+                commonHeaders['User-Agent'] = userAgents[Math.floor(Math.random() * userAgents.length)];
+            }
 
             const scrapeGoogle = async (searchQuery) => {
                 try {
@@ -629,68 +647,78 @@ const nayaxaStandalone = {
             if (!hasWebScraperResults || filteredResults.length === 0) {
                 console.log('[Nayaxa] Web Scraper Kosong/Diblokir. Memulai Waterfall API Fallback...');
                 let apiSuccess = false;
-
-                // Lapis 1: Serper.dev
-                if (!apiSuccess && process.env.SERPER_API_KEY) {
-                    try {
-                        console.log('[Waterfall Lapis 1] Menggunakan Serper.dev...');
-                        const fallbackQuery = queriesToTry[0] || query;
-                        const serperData = JSON.stringify({ "q": fallbackQuery, "gl": "id", "hl": "id" });
-                        const serperRes = await axios.post('https://google.serper.dev/search', serperData, {
-                            headers: { 'X-API-KEY': process.env.SERPER_API_KEY, 'Content-Type': 'application/json' },
-                            timeout: 10000
-                        });
-                        
-                        if (serperRes.data && serperRes.data.organic && serperRes.data.organic.length > 0) {
-                            serperRes.data.organic.slice(0, 5).forEach(r => {
-                                filteredResults.push({ source: 'Google (API Lapis 1)', title: r.title, snippet: r.snippet, link: r.link, trustedScore: getTrustedScore(r.link) });
+                if (!apiSuccess) {
+                    if (process.env.SERPER_API_KEY) {
+                        try {
+                            console.log('[Waterfall Lapis 1] Menggunakan Serper.dev...');
+                            const fallbackQuery = queriesToTry[0] || query;
+                            const serperData = JSON.stringify({ "q": fallbackQuery, "gl": "id", "hl": "id" });
+                            const serperRes = await axios.post('https://google.serper.dev/search', serperData, {
+                                headers: { 'X-API-KEY': process.env.SERPER_API_KEY, 'Content-Type': 'application/json' },
+                                timeout: 10000
                             });
-                            apiSuccess = true;
-                        }
-                    } catch (err) { console.error('[Waterfall Lapis 1] Gagal:', err.message); }
+                            
+                            if (serperRes.data && serperRes.data.organic && serperRes.data.organic.length > 0) {
+                                serperRes.data.organic.slice(0, 5).forEach(r => {
+                                    filteredResults.push({ source: 'Google (API Lapis 1)', title: r.title, snippet: r.snippet, link: r.link, trustedScore: getTrustedScore(r.link) });
+                                });
+                                apiSuccess = true;
+                            }
+                        } catch (err) { console.error('[Waterfall Lapis 1] Gagal:', err.message); }
+                    } else {
+                        console.log('[Waterfall Lapis 1] Lewati: SERPER_API_KEY tidak diatur.');
+                    }
                 }
 
-                // Lapis 2: Tavily API (1000 bulan)
-                if (!apiSuccess && process.env.TAVILY_API_KEY) {
-                    try {
-                        console.log('[Waterfall Lapis 2] Menggunakan Tavily API...');
-                        const fallbackQuery = queriesToTry[0] || query;
-                        const tavilyData = JSON.stringify({ 
-                            api_key: process.env.TAVILY_API_KEY, 
-                            query: fallbackQuery,
-                            search_depth: "basic",
-                            max_results: 5
-                        });
-                        const tavilyRes = await axios.post('https://api.tavily.com/search', tavilyData, {
-                            headers: { 'Content-Type': 'application/json' },
-                            timeout: 10000
-                        });
-                        
-                        if (tavilyRes.data && tavilyRes.data.results && tavilyRes.data.results.length > 0) {
-                            tavilyRes.data.results.slice(0, 5).forEach(r => {
-                                filteredResults.push({ source: 'Tavily (API Lapis 2)', title: r.title, snippet: r.content, link: r.url, trustedScore: getTrustedScore(r.url) });
+                // Lapis 2: Tavily API
+                if (!apiSuccess) {
+                    if (process.env.TAVILY_API_KEY) {
+                        try {
+                            console.log('[Waterfall Lapis 2] Menggunakan Tavily API...');
+                            const fallbackQuery = queriesToTry[0] || query;
+                            const tavilyData = JSON.stringify({ 
+                                api_key: process.env.TAVILY_API_KEY, 
+                                query: fallbackQuery,
+                                search_depth: "basic",
+                                max_results: 5
                             });
-                            apiSuccess = true;
-                        }
-                    } catch (err) { console.error('[Waterfall Lapis 2] Gagal:', err.message); }
+                            const tavilyRes = await axios.post('https://api.tavily.com/search', tavilyData, {
+                                headers: { 'Content-Type': 'application/json' },
+                                timeout: 10000
+                            });
+                            
+                            if (tavilyRes.data && tavilyRes.data.results && tavilyRes.data.results.length > 0) {
+                                tavilyRes.data.results.slice(0, 5).forEach(r => {
+                                    filteredResults.push({ source: 'Tavily (API Lapis 2)', title: r.title, snippet: r.content, link: r.url, trustedScore: getTrustedScore(r.url) });
+                                });
+                                apiSuccess = true;
+                            }
+                        } catch (err) { console.error('[Waterfall Lapis 2] Gagal:', err.message); }
+                    } else {
+                        console.log('[Waterfall Lapis 2] Lewati: TAVILY_API_KEY tidak diatur.');
+                    }
                 }
 
                 // Lapis 3: SerpApi
-                if (!apiSuccess && process.env.SERPAPI_API_KEY) {
-                    try {
-                        console.log('[Waterfall Lapis 3] Menggunakan SerpApi...');
-                        const fallbackQuery = queriesToTry[0] || query;
-                        const serpApiRes = await axios.get(`https://serpapi.com/search.json?q=${encodeURIComponent(fallbackQuery)}&hl=id&gl=id&api_key=${process.env.SERPAPI_API_KEY}`, {
-                            timeout: 10000
-                        });
-                        
-                        if (serpApiRes.data && serpApiRes.data.organic_results && serpApiRes.data.organic_results.length > 0) {
-                            serpApiRes.data.organic_results.slice(0, 5).forEach(r => {
-                                filteredResults.push({ source: 'Google (API Lapis 3)', title: r.title, snippet: r.snippet, link: r.link, trustedScore: getTrustedScore(r.link) });
+                if (!apiSuccess) {
+                    if (process.env.SERPAPI_API_KEY) {
+                        try {
+                            console.log('[Waterfall Lapis 3] Menggunakan SerpApi...');
+                            const fallbackQuery = queriesToTry[0] || query;
+                            const serpApiRes = await axios.get(`https://serpapi.com/search.json?q=${encodeURIComponent(fallbackQuery)}&hl=id&gl=id&api_key=${process.env.SERPAPI_API_KEY}`, {
+                                timeout: 10000
                             });
-                            apiSuccess = true;
-                        }
-                    } catch (err) { console.error('[Waterfall Lapis 3] Gagal:', err.message); }
+                            
+                            if (serpApiRes.data && serpApiRes.data.organic_results && serpApiRes.data.organic_results.length > 0) {
+                                serpApiRes.data.organic_results.slice(0, 5).forEach(r => {
+                                    filteredResults.push({ source: 'Google (API Lapis 3)', title: r.title, snippet: r.snippet, link: r.link, trustedScore: getTrustedScore(r.link) });
+                                });
+                                apiSuccess = true;
+                            }
+                        } catch (err) { console.error('[Waterfall Lapis 3] Gagal:', err.message); }
+                    } else {
+                        console.log('[Waterfall Lapis 3] Lewati: SERPAPI_API_KEY tidak diatur.');
+                    }
                 }
             }
 

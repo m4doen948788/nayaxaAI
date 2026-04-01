@@ -21,18 +21,13 @@ const toolFunctions = {
     search_database: async ({ query }) => { // Map AI-hallucinated name
         return await toolFunctions.execute_sql_query({ query });
     },
-    generate_document: async ({ format, content, filename, baseUrl }) => {
+    generate_document: async ({ format, content, filename }, { baseUrl }) => {
         try {
-            let downloadUrl = "";
-            if (format === 'excel') {
-                downloadUrl = await exportService.generateExcel(content, filename);
-            } else if (format === 'pdf') {
-                downloadUrl = await exportService.generatePDF(content, filename);
-            } else if (format === 'word') {
-                downloadUrl = await exportService.generateWord(content, filename);
-            }
-            const fullUrl = downloadUrl.startsWith('http') ? downloadUrl : `${baseUrl}${downloadUrl}`;
-            return { success: true, download_url: fullUrl, message: `File ${format.toUpperCase()} siap: ${fullUrl}. ANDA WAJIB MEMBERIKAN LINK INI KEPADA USER AGAR MEREKA BISA MENDOWNLOADNYA.` };
+            const downloadUrl = await (format === 'excel' ? exportService.generateExcel(content, filename) :
+                                format === 'pdf' ? exportService.generatePDF(content, filename) :
+                                exportService.generateWord(content, filename));
+            
+            return { success: true, download_url: downloadUrl, message: `File ${format.toUpperCase()} siap! Berikan link ini ke user: ${downloadUrl}` };
         } catch (err) {
             return { success: false, error: err.message };
         }
@@ -47,6 +42,18 @@ const toolFunctions = {
             }
             const b64 = Buffer.from(JSON.stringify(chartSpec)).toString('base64');
             return { success: true, chart_marker: `[NAYAXA_CHART]${b64}[/NAYAXA_CHART]`, message: 'Chart ready.' };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    },
+    fill_excel_template: async ({ filled_data, filename }, { excelBase64, baseUrl }) => {
+        try {
+            if (!excelBase64) {
+                return { success: false, error: "Tidak ada file Excel yang ditemukan dalam konteks percakapan untuk diisi." };
+            }
+            const downloadUrl = await exportService.fillExcelTemplate(excelBase64, filled_data, filename);
+            const fullUrl = downloadUrl.startsWith('http') ? downloadUrl : `${baseUrl}${downloadUrl}`;
+            return { success: true, download_url: fullUrl, message: `Excel berhasil diisi! Berikan link ini ke user: ${fullUrl}` };
         } catch (err) {
             return { success: false, error: err.message };
         }
@@ -132,24 +139,43 @@ const DEEPSEEK_TOOLS = [
             }, 
             required: ["category", "content", "source_file"] 
         } 
+    } },
+    { type: "function", function: { 
+        name: "fill_excel_template", 
+        description: "Mengisi data ke dalam file Excel yang baru saja diunggah oleh user.", 
+        parameters: { 
+            type: "object", 
+            properties: { 
+                filled_data: { type: "string", description: "Data yang akan diisikan dalam format JSON Array of Objects. Key harus sesuai dengan header kolom di Excel (case-insensitive)." },
+                filename: { type: "string", description: "Nama file hasil (misal: 'data_pegawai_terisi.xlsx')" }
+            }, 
+            required: ["filled_data", "filename"] 
+        } 
     } }
 ];
 
 const nayaxaDeepSeekService = {
-    chatWithNayaxa: async (userMessage, fileContext, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, baseUrl = '', fullDate = '', fileBase64 = null, fileMimeType = null) => {
+    chatWithNayaxa: async (userMessage, fileContext, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, baseUrl = '', fullDate = '', files = [], nama_instansi = 'N/A') => {
         try {
             const apiKey = process.env.DEEPSEEK_API_KEY;
             const schemaMapString = await nayaxaStandalone.getDatabaseSchema();
             
-            const system = `Identitas ANDA: Nayaxa, asisten AI dari Bapperida. 
+            const system = `Identitas ANDA: Nayaxa, asisten AI dari Bapperida yang dibuat oleh Sammy. 
             Sifat & Gaya Bahasa: Sangat ceria, ramah, profesional, dan empatik. Di akhir setiap penjelasan, SELALU tawarkan bantuan ekstra atau berikan satu pertanyaan pendek untuk menggali lebih dalam apa yang user butuhkan.
             PENTING: DILARANG KERAS MENGGUNAKAN EMOJI APAPUN.
-            Identitas USER: ${user_name} (Profil ID: ${profil_id || 'N/A'}) dari Instansi ID: ${instansi_id || 'N/A'}. 
+            Identitas USER: ${user_name} (Profil ID: ${profil_id || 'N/A'}) dari Instansi: ${nama_instansi}. 
             Jika user bertanya "siapa saya?", jawablah dengan nama user (${user_name}).
             
             ATURAN GRAFIK: Jika user meminta grafik/chart, Anda WAJIB menggunakan tool 'generate_chart'. JANGAN PERNAH memberikan kode Python atau CSV mentah. Gunakan tool tersebut untuk membuat visualisasi interaktif.
             CATATAN EKSPOR: Jelaskan ke user bahwa tombol 'Unduh PNG' adalah untuk mengambil gambar grafik, sedangkan 'Unduh Excel' adalah untuk mengambil data angka mentahnya agar mereka bisa mengolahnya lagi di Excel.
-            CATATAN DOKUMEN: Jika user meminta laporan atau dokumen (PDF/Word/Excel), Anda WAJIB memberikan link download yang diberikan oleh tool 'generate_document'. Anda WAJIB menggunakan format Markdown [Nama Dokumen](url) agar link tersebut dapat diklik. Letakkan link ini di akhir pesan Anda secara jelas.
+            CATATAN DOKUMEN: Jika user meminta laporan atau dokumen (PDF/Word/Excel), Anda WAJIB memberikan link download yang diberikan oleh tool 'generate_document'. Anda WAJIB menggunakan format Markdown [Unduh Laporan (Jenis)] (url) agar link tersebut dapat diklik (Ganti 'Jenis' dengan PDF/Excel/Word sesuai filenya). Letakkan link ini di akhir pesan Anda secara jelas.
+            
+            PENGISIAN EXCEL: Jika user mengunggah file Excel (Template) dan meminta Anda untuk "mengisi", "lengkapi", atau "masukkan data" ke dalamnya, gunakan tool 'fill_excel_template'. 
+            TEKNIK PENGISIAN: 
+            - Gunakan key "uraian" atau "label" untuk mencocokkan baris yang ingin diisi. 
+            - Gunakan key lain yang sesuai dengan Nama Header Kolom (misal: "hasil verifikasi", "rekomendasi", "keterangan") untuk mengisi nilainya.
+            - Contoh: [{"uraian": "Lokasi", "rekomendasi": "Masukkan alamat lengkap"}] akan mencari baris yang mengandung kata 'Lokasi' dan mengisi kolom 'REKOMENDASI' di baris tersebut.
+            BERIKAN LINK DOWNLOAD HASILNYA kepada user.
             
             WAKTU SEKARANG: ${fullDate || `Bulan ${month}, Tahun ${year}`}. Gunakan informasi ini jika user bertanya tentang hari atau tanggal hari ini secara spesifik.
             
@@ -167,7 +193,7 @@ const nayaxaDeepSeekService = {
             - JANGAN PERNAH memberikan pesan menggantung tanpa konklusi.
             
             PENTING - AKURASI DATA INTERNAL:
-            1. MULTI-TENANCY: Anda sedang melayani user dari Instansi ID: ${instansi_id}. Saat membuat SQL query, Anda WAJIB memfilter hasil berdasarkan instansi_id kolom yang sesuai (misal: p.instansi_id = ${instansi_id}) di tabel profil_pegawai, kegiatan_harian, atau tabel lain yang relevan. Jangan pernah menampilkan data dari instansi lain!
+            1. MULTI-TENANCY: Anda sedang melayani user dari Instansi: ${nama_instansi} (ID Internal: ${instansi_id}). Saat membuat SQL query, Anda WAJIB memfilter hasil berdasarkan instansi_id kolom yang sesuai (misal: p.instansi_id = ${instansi_id}) di tabel profil_pegawai, kegiatan_harian, atau tabel lain yang relevan. Jangan pernah menampilkan data dari instansi lain!
             2. NAMA & BIDANG: Jika user bertanya tentang pegawai di bidang tertentu (misal: PPM), cari dulu ID atau nama bidang yang sesuai di tabel 'master_bidang_instansi' menggunakan JOIN.
             
             PENTING - STRATEGI PENCARIAN (BACA DENGAN TELITI):
@@ -222,14 +248,21 @@ const nayaxaDeepSeekService = {
             
             ${schemaMapString}`;
             
-            // --- FILE PRE-PROCESSOR (Handle Excel/CSV) ---
-            if (fileBase64 && fileMimeType) {
-                const isExcel = fileMimeType.includes('spreadsheetml') || fileMimeType.includes('excel') || fileMimeType.includes('officedocument.spreadsheetml.sheet');
-                const isCSV = fileMimeType.includes('csv');
+            // --- MULTI-FILE PRE-PROCESSOR ---
+            let firstImage = null;
+            const attachmentList = Array.isArray(files) ? files : [];
+
+            for (const file of attachmentList) {
+                const { base64, mimeType } = file;
+                if (!base64 || !mimeType) continue;
+
+                const isExcel = mimeType.includes('spreadsheetml') || mimeType.includes('excel') || mimeType.includes('officedocument.spreadsheetml.sheet');
+                const isCSV = mimeType.includes('csv');
+                
                 if (isExcel || isCSV) {
                     try {
                         console.log(`[DeepSeek] Pre-processing ${isExcel ? 'Excel' : 'CSV'} file...`);
-                        const cleanB64 = fileBase64.includes('base64,') ? fileBase64.split('base64,')[1] : fileBase64;
+                        const cleanB64 = base64.includes('base64,') ? base64.split('base64,')[1] : base64;
                         const buffer = Buffer.from(cleanB64, 'base64');
                         const workbook = XLSX.read(buffer, { type: 'buffer' });
                         let sheetData = "";
@@ -239,11 +272,13 @@ const nayaxaDeepSeekService = {
                             sheetData += `\n--- Sheet: ${sheetName} ---\n${csv}\n`;
                         });
                         fileContext = (fileContext ? fileContext + '\n\n' : '') + `DATA FILE (${isExcel ? 'EXCEL' : 'CSV'}):\n${sheetData}`;
-                        fileBase64 = null;
-                        fileMimeType = null;
                     } catch (err) {
                         console.error('DeepSeek File Pre-process Error:', err);
                     }
+                } else if (mimeType.startsWith('image/') && !firstImage) {
+                    // DeepSeek currently only supports one image via image_url in most compatible implementations
+                    const cleanBase64 = base64.includes('base64,') ? base64.split('base64,')[1] : base64;
+                    firstImage = { mimeType, data: cleanBase64 };
                 }
             }
 
@@ -259,13 +294,12 @@ const nayaxaDeepSeekService = {
                 messages.push({ role, content: h.parts ? h.parts[0].text : h.content });
             });
             const userTextPart = fileContext ? `${fileContext}\n\n${userMessage}` : userMessage;
-            if (fileBase64 && fileMimeType && fileMimeType.startsWith('image/')) {
-                const cleanBase64 = fileBase64.includes('base64,') ? fileBase64.split('base64,')[1] : fileBase64;
+            if (firstImage) {
                 messages.push({
                     role: "user",
                     content: [
                         { type: "text", text: userTextPart },
-                        { type: "image_url", image_url: { url: `data:${fileMimeType};base64,${cleanBase64}` } }
+                        { type: "image_url", image_url: { url: `data:${firstImage.mimeType};base64,${firstImage.data}` } }
                     ]
                 });
             } else {
@@ -301,8 +335,12 @@ const nayaxaDeepSeekService = {
                     const fn = call.function.name;
                     const args = typeof call.function.arguments === 'string' ? JSON.parse(call.function.arguments) : call.function.arguments;
                     
+                    // Capture the first Excel file's base64 for filling purposes
+                    const excelFile = attachmentList.find(f => f.mimeType.includes('spreadsheetml') || f.mimeType.includes('excel') || f.mimeType.includes('officedocument.spreadsheetml.sheet'));
+                    const excelBase64 = excelFile ? excelFile.base64 : null;
+
                     console.log(`[DeepSeek] Executing ${fn}...`);
-                    let res = await toolFunctions[fn]({ ...args, instansi_id, month, year, baseUrl });
+                    let res = await toolFunctions[fn]({ ...args, instansi_id, month, year }, { excelBase64, baseUrl });
                     
                     if (fn === 'generate_chart' && res.success) {
                         generatedChartMarkers.push(res.chart_marker);

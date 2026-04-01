@@ -33,11 +33,11 @@ export default function NayaxaAssistant({
   const [messages, setMessages] = useState<{
     role: 'user' | 'assistant', 
     text: string, 
-    file?: { name: string, url?: string | null, type: string },
+    files?: { name: string, url?: string | null, type: string }[],
     brainUsed?: string,
     created_at?: string
   }[]>([
-    { role: 'assistant', text: 'Hai, selamat datang, saya Nayaxa asisten Anda, ada yang bisa saya bantu hari ini?' }
+    { role: 'assistant', text: `hi selamat datang ${user?.nama_lengkap || 'Sobat Nayaxa'}` }
   ]);
   
   const [inputVal, setInputVal] = useState('');
@@ -47,9 +47,8 @@ export default function NayaxaAssistant({
   const [showHistory, setShowHistory] = useState(false);
   const [lastBrainUsed, setLastBrainUsed] = useState<string | null>(null);
   const [thinkingBrain, setThinkingBrain] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [fileMimeType, setFileMimeType] = useState<string | null>(null);
-  const [fileName, setFileName] = useState<string | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<{ base64: string, mimeType: string, name: string }[]>([]);
+  const selectedFilesRef = useRef<{ base64: string, mimeType: string, name: string }[]>([]);
   const [isDragging, setIsDragging] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -102,7 +101,7 @@ export default function NayaxaAssistant({
   };
 
   const startNewChat = () => {
-    setMessages([{ role: 'assistant', text: `Hai, selamat datang, saya Nayaxa asisten Anda, ada yang bisa saya bantu hari ini?` }]);
+    setMessages([{ role: 'assistant', text: `hi selamat datang ${user?.nama_lengkap || 'Sobat Nayaxa'}` }]);
     setSessionId(null);
     setLastBrainUsed(null);
     setShowHistory(false);
@@ -110,25 +109,29 @@ export default function NayaxaAssistant({
 
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if ((!inputVal.trim() && !selectedFile) || isTyping) return;
+    if ((!inputVal.trim() && selectedFiles.length === 0) || isTyping) return;
 
     const userMsg = inputVal;
-    const file = selectedFile;
-    const mime = fileMimeType;
-    const name = fileName;
+    const attachments = [...selectedFiles];
 
     setInputVal('');
-    setSelectedFile(null);
-    setMessages(prev => [...prev, { role: 'user', text: userMsg, file: file ? { name: name!, url: file, type: mime! } : undefined }]);
+    setSelectedFiles([]);
+    selectedFilesRef.current = [];
+    
+    setMessages(prev => [...prev, { 
+      role: 'user', 
+      text: userMsg, 
+      files: attachments.map(a => ({ name: a.name, url: a.base64, type: a.mimeType })) 
+    }]);
     
     setIsTyping(true);
-    setThinkingBrain(file ? 'Gemini' : 'DeepSeek');
+    const hasImage = attachments.some(a => a.mimeType.startsWith('image/'));
+    setThinkingBrain(attachments.length > 0 ? (hasImage ? 'Gemini' : 'DeepSeek') : 'DeepSeek');
 
     try {
       const res = await api.chat({
         message: userMsg,
-        fileBase64: file || undefined,
-        fileMimeType: mime || undefined,
+        files: attachments,
         user_id: user.id,
         user_name: user.nama_lengkap,
         instansi_id: user.instansi_id,
@@ -151,22 +154,47 @@ export default function NayaxaAssistant({
     }
   };
 
-  const handleFile = (file: File) => {
-    if (!file) return;
-    if (file.size > 10 * 1024 * 1024) return alert('File terlalu besar (max 10MB)');
+  const handleFiles = (files: File[]) => {
+    if (!files || files.length === 0) return;
     
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setSelectedFile(reader.result as string);
-      setFileMimeType(file.type);
-      setFileName(file.name);
-    };
-    reader.readAsDataURL(file);
+    const currentCount = selectedFilesRef.current.length;
+    const remaining = 5 - currentCount;
+    if (remaining <= 0) return alert('Maksimal 5 file sekaligus');
+
+    const toProcess = files.slice(0, remaining);
+    if (toProcess.length < files.length) alert('Hanya 5 file pertama yang akan diproses');
+
+    const promises = toProcess.map(file => {
+      return new Promise<{ base64: string, mimeType: string, name: string } | null>((resolve) => {
+        if (file.size > 10 * 1024 * 1024) {
+          alert(`${file.name} terlalu besar (max 10MB)`);
+          return resolve(null);
+        }
+        const reader = new FileReader();
+        reader.onloadend = () => resolve({
+          base64: reader.result as string,
+          mimeType: file.type,
+          name: file.name
+        });
+        reader.readAsDataURL(file);
+      });
+    });
+
+    Promise.all(promises).then(results => {
+      const validResults = results.filter(r => r !== null) as { base64: string, mimeType: string, name: string }[];
+      if (validResults.length > 0) {
+        selectedFilesRef.current = [...selectedFilesRef.current, ...validResults];
+        setSelectedFiles([...selectedFilesRef.current]);
+      }
+    });
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) handleFile(file);
+    const files = e.target.files;
+    if (files) {
+      handleFiles(Array.from(files));
+    }
+    e.target.value = '';
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -186,8 +214,9 @@ export default function NayaxaAssistant({
     e.stopPropagation();
     setIsDragging(false);
     
-    const file = e.dataTransfer.files?.[0];
-    if (file) handleFile(file);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFiles(Array.from(e.dataTransfer.files));
+    }
   };
 
   useEffect(() => {
@@ -258,29 +287,100 @@ export default function NayaxaAssistant({
                   {messages.map((m, i) => (
                     <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                       <div className={`max-w-[85%] p-3 rounded-2xl text-[13px] ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none shadow-md shadow-indigo-100' : 'bg-white border rounded-tl-none shadow-sm'}`}>
-                        {m.file && (
-                           <div className="mb-2">
-                             {m.file.type.startsWith('image/') ? (
-                               <img src={m.file.url!} alt="Attachment" className="max-w-full rounded-lg border" />
-                             ) : (
-                               <div className="bg-slate-50 border p-2 rounded-lg flex items-center gap-2">
-                                 <FileArchive size={16} className="text-indigo-600" />
-                                 <span className="text-[10px] font-bold truncate">{m.file.name}</span>
-                               </div>
-                             )}
-                           </div>
+                        {m.files && m.files.length > 0 && (
+                            <div className="mb-2 flex flex-wrap gap-2">
+                              {m.files.map((file, idx) => (
+                                <div key={idx} className={file.type.startsWith('image/') ? "w-20 h-20 shrink-0" : "min-w-[120px] max-w-[180px] flex-1"}>
+                                  {file.type.startsWith('image/') ? (
+                                    <img src={file.url!} alt="Attachment" className="w-full h-full object-cover rounded-lg border shadow-sm" />
+                                  ) : (
+                                    <div className="bg-slate-50 border p-2 rounded-lg flex items-center gap-2 h-full overflow-hidden">
+                                      <FileArchive size={14} className="text-indigo-600 shrink-0" />
+                                      <span className="text-[9px] font-bold truncate flex-1">{file.name}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
                         )}
-                        <div className="whitespace-pre-wrap leading-relaxed">
+                        <div className="whitespace-pre-wrap leading-relaxed break-words overflow-hidden">
                           {(() => {
                             const CHART_REGEX = /\[NAYAXA_CHART\](.*?)\[\/NAYAXA_CHART\]/gs;
                             const segments: any[] = [];
                             let lastIdx = 0;
                             let chartMatch;
 
+                            const renderTextSegment = (text: string, key: string) => {
+                              // Strip Markdown Header hashes
+                              const cleanMarkdown = text.replace(/^#+\s/gm, '').replace(/\n#+\s/g, '\n');
+                              
+                              const parts: (string | JSX.Element)[] = [];
+                              let li = 0;
+                              let lm;
+                              
+                              // Handle bold formatting **text**
+                              const boldRegex = /\*\*([^*]+)\*\*/g;
+                              
+                              const processLinks = (input: string, baseKey: string) => {
+                                const subParts: (string | JSX.Element)[] = [];
+                                let sli = 0;
+                                let slm;
+                                
+                                // Regex to match either Markdown link [text](url) OR raw URL http(s)://...
+                                const combinedRegex = /\[([^\]]+)\]\s*\(([^)]+)\)|(https?:\/\/[^\s]+)/g;
+                                
+                                while ((slm = combinedRegex.exec(input)) !== null) {
+                                  if (slm.index > sli) subParts.push(input.substring(sli, slm.index));
+                                  
+                                  const markdownText = slm[1];
+                                  const markdownUrl = slm[2];
+                                  const rawUrl = slm[3];
+                                  
+                                  const linkUrl = markdownUrl || rawUrl;
+                                  const linkText = markdownText || rawUrl;
+                                  
+                                  const isDownload = linkUrl.includes('/uploads/exports/');
+                                  
+                                  subParts.push(
+                                    <a 
+                                      key={`${baseKey}-l-${slm.index}`} 
+                                      href={linkUrl} 
+                                      target="_blank" 
+                                      rel="noopener noreferrer"
+                                      download={isDownload ? `${linkText.replace(/[\[\]]/g, '')}.${linkUrl.split('.').pop()?.split(/[?#]/)[0]}` : undefined}
+                                      className={`inline-flex items-center gap-2 my-1 p-2 px-3 rounded-lg border transition-all max-w-full break-all shadow-sm ${
+                                        isDownload ? 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100 font-bold underline' : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 underline'
+                                      }`}
+                                    >
+                                      {isDownload ? <FileArchive size={14} className="shrink-0" /> : <Plus size={14} className="rotate-45 shrink-0" />}
+                                      <span className="truncate max-w-[140px] sm:max-w-[280px]">{linkText}</span>
+                                    </a>
+                                  );
+                                  sli = combinedRegex.lastIndex;
+                                }
+                                if (sli < input.length) subParts.push(input.substring(sli));
+                                return subParts;
+                              };
+
+                              while ((lm = boldRegex.exec(cleanMarkdown)) !== null) {
+                                if (lm.index > li) {
+                                  parts.push(...processLinks(cleanMarkdown.substring(li, lm.index), `bpre-${lm.index}`));
+                                }
+                                parts.push(<strong key={`b-${lm.index}`} className="font-bold">{lm[1]}</strong>);
+                                li = boldRegex.lastIndex;
+                              }
+                              
+                              if (li < cleanMarkdown.length) {
+                                parts.push(...processLinks(cleanMarkdown.substring(li), `bend-${li}`));
+                              }
+                              
+                              return <span key={key}>{parts.length > 0 ? parts : cleanMarkdown}</span>;
+                            };
+
                             while ((chartMatch = CHART_REGEX.exec(m.text)) !== null) {
                               if (chartMatch.index > lastIdx) {
                                 const textBefore = m.text.substring(lastIdx, chartMatch.index).trim();
-                                if (textBefore) segments.push(<span key={`t-${lastIdx}`}>{textBefore}</span>);
+                                if (textBefore) segments.push(renderTextSegment(textBefore, `t-${lastIdx}`));
                               }
                               try {
                                 let rawSpec = chartMatch[1].trim();
@@ -295,9 +395,9 @@ export default function NayaxaAssistant({
                             }
                             if (lastIdx < m.text.length) {
                               const remaining = m.text.substring(lastIdx).trim();
-                              if (remaining) segments.push(<span key={`t-end`}>{remaining}</span>);
+                              if (remaining) segments.push(renderTextSegment(remaining, `t-end`));
                             }
-                            return segments.length > 0 ? segments : m.text;
+                            return segments.length > 0 ? segments : (typeof m.text === 'string' ? renderTextSegment(m.text, 't-only') : m.text);
                           })()}
                         </div>
                       </div>
@@ -337,20 +437,30 @@ export default function NayaxaAssistant({
                 </AnimatePresence>
 
                 <div className="p-3 bg-white border-t">
-                  {selectedFile && (
-                    <div className="mb-2 relative inline-block">
-                      {fileMimeType?.startsWith('image/') ? (
-                        <img src={selectedFile} alt="Preview" className="h-12 w-12 object-cover rounded-lg border shadow-sm" />
-                      ) : (
-                        <div className="h-12 w-24 bg-indigo-50 rounded-lg border flex items-center justify-center p-1 overflow-hidden">
-                          <span className="text-[8px] font-bold truncate text-indigo-700">{fileName}</span>
+                  {selectedFiles.length > 0 && (
+                    <div className="mb-2 flex flex-wrap gap-2">
+                      {selectedFiles.map((file, idx) => (
+                        <div key={idx} className="relative inline-block group">
+                          {file.mimeType.startsWith('image/') ? (
+                            <img src={file.base64} alt="Preview" className="h-12 w-12 object-cover rounded-lg border shadow-sm" />
+                          ) : (
+                            <div className="h-12 w-24 bg-indigo-50 rounded-lg border flex items-center justify-center p-1 overflow-hidden">
+                              <span className="text-[8px] font-bold truncate text-indigo-700">{file.name}</span>
+                            </div>
+                          )}
+                          <button 
+                            type="button"
+                            onClick={() => setSelectedFiles(prev => prev.filter((_, i) => i !== idx))} 
+                            className="absolute -top-1.5 -right-1.5 bg-slate-800 text-white rounded-full p-0.5 shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <X size={10} />
+                          </button>
                         </div>
-                      )}
-                      <button onClick={() => setSelectedFile(null)} className="absolute -top-1.5 -right-1.5 bg-slate-800 text-white rounded-full p-0.5 shadow-md"><X size={10} /></button>
+                      ))}
                     </div>
                   )}
                   <form onSubmit={handleSend} className="flex gap-2 items-center">
-                    <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} />
+                    <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} multiple />
                     <button type="button" onClick={() => fileInputRef.current?.click()} className="p-2 text-slate-400 hover:text-indigo-600"><Plus size={20} /></button>
                     <div className="relative flex-1">
                       <input 
@@ -359,7 +469,7 @@ export default function NayaxaAssistant({
                         placeholder="Tanya Nayaxa..." 
                         disabled={isTyping}
                       />
-                      <button type="submit" disabled={!inputVal.trim() && !selectedFile} className="absolute right-1.5 top-1.5 p-1 bg-indigo-600 text-white rounded-lg disabled:opacity-50"><Send size={14} /></button>
+                      <button type="submit" disabled={!inputVal.trim() && selectedFiles.length === 0} className="absolute right-1.5 top-1.5 p-1 bg-indigo-600 text-white rounded-lg disabled:opacity-50"><Send size={14} /></button>
                     </div>
                   </form>
                 </div>

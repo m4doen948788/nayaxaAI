@@ -12,6 +12,7 @@ if (!fs.existsSync(EXPORT_DIR)) {
 
 const exportService = {
     generateExcel: async (data, filename = 'export.xlsx') => {
+        console.log(`[EXPORT:EXCEL] Generating ${filename}. Content elements: ${Array.isArray(data) ? data.length : 'N/A'}`);
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet('Nayaxa Export');
         if (typeof data === 'string') {
@@ -33,16 +34,29 @@ const exportService = {
         const safe = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
         const p = path.join(EXPORT_DIR, safe);
         await workbook.xlsx.writeFile(p);
-        return `/uploads/exports/${safe}`;
+        return `/api/nayaxa/export/${safe}`;
     },
 
     generatePDF: async (content, filename = 'laporan.pdf') => {
+        console.log(`[EXPORT:PDF] Generating ${filename}. Content length: ${content?.length || 0}`);
         return new Promise((resolve, reject) => {
+            if (!content || !content.trim()) {
+                content = "Tidak ada konten yang diberikan untuk laporan ini. Silakan berikan instruksi lebih detail kepada Nayaxa.";
+            }
             const doc = new PDFDocument({ margin: 50, bufferPages: true });
+            doc.on('error', (err) => {
+                console.error('[PDF:CRITICAL] Document Error:', err);
+                reject(err);
+            });
             const safe = filename.endsWith('.pdf') ? filename : `${filename}.pdf`;
             const p = path.join(EXPORT_DIR, safe);
             const s = fs.createWriteStream(p);
             
+            s.on('error', (err) => {
+                console.error('[PDF:STREAM] Write Stream Error:', err);
+                reject(err);
+            });
+
             doc.pipe(s);
             
             // Header
@@ -51,7 +65,7 @@ const exportService = {
             doc.moveDown(2);
             
             // Content
-            const cleanContent = content
+            const cleanContent = String(content || '')
                 .replace(/\*\*/g, '') // Remove bold asterisks
                 .replace(/^#+\s/gm, '') // Remove header hashes at start of line
                 .replace(/\n#+\s/g, '\n'); // Remove header hashes after newline
@@ -75,12 +89,16 @@ const exportService = {
             }
 
             doc.end();
-            s.on('finish', () => resolve(`/uploads/exports/${safe}`));
+            s.on('finish', () => resolve(`/api/nayaxa/export/${safe}`));
             s.on('error', reject);
         });
     },
 
     generateWord: async (content, filename = 'dokumen.docx') => {
+        console.log(`[EXPORT:WORD] Generating ${filename}. Content length: ${content?.length || 0}`);
+        if (!content || !content.trim()) {
+            content = "Dokumen ini kosong karena tidak ada teks yang dikirimkan.";
+        }
         const doc = new Document({
             sections: [{
                 children: [
@@ -93,7 +111,110 @@ const exportService = {
         const p = path.join(EXPORT_DIR, safe);
         const b = await Packer.toBuffer(doc);
         fs.writeFileSync(p, b);
-        return `/uploads/exports/${safe}`;
+        return `/api/nayaxa/export/${safe}`;
+    },
+
+    fillExcelTemplate: async (base64Input, filledData, filename = 'filled_template.xlsx') => {
+        try {
+            const cleanB64 = base64Input.includes('base64,') ? base64Input.split('base64,')[1] : base64Input;
+            const buffer = Buffer.from(cleanB64, 'base64');
+            
+            const workbook = new ExcelJS.Workbook();
+            await workbook.xlsx.load(buffer);
+            const worksheet = workbook.worksheets[0]; // Assume first sheet
+            
+            if (typeof filledData === 'string') {
+                const cleanData = filledData.replace(/^```(json)?\n?/, '').replace(/\n?```$/, '').trim();
+                filledData = JSON.parse(cleanData);
+            }
+
+            if (Array.isArray(filledData)) {
+                // 1. Identify Headers and their column indices
+                let headerRow = null;
+                const headerMap = {}; // name -> colNumber
+                
+                worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+                    // Try to find a row that looks like a header (contains 'uraian' or 'rekomendasi' etc)
+                    const rowValues = [];
+                    row.eachCell(c => rowValues.push(String(c.value || '').toLowerCase()));
+                    
+                    if (rowValues.includes('uraian') || rowValues.includes('keterangan') || rowValues.includes('item')) {
+                        if (!headerRow) {
+                            headerRow = row;
+                            row.eachCell((cell, colNumber) => {
+                                if (cell.value) headerMap[String(cell.value).toLowerCase().trim()] = colNumber;
+                            });
+                        }
+                    }
+                });
+
+                // If no clear header found, use the very first row with data as headerMap source
+                if (!headerRow) {
+                    const firstRow = worksheet.getRow(1);
+                    firstRow.eachCell((cell, colNumber) => {
+                        if (cell.value) headerMap[String(cell.value).toLowerCase().trim()] = colNumber;
+                    });
+                }
+
+                // 2. Process each item in filledData
+                filledData.forEach(item => {
+                    let found = false;
+                    const itemKeys = Object.keys(item);
+                    const lookupKey = itemKeys.find(k => k.toLowerCase() === 'uraian' || k.toLowerCase() === 'label' || k.toLowerCase() === 'item');
+                    const lookupValue = lookupKey ? String(item[lookupKey]).toLowerCase().trim() : null;
+
+                    if (lookupValue) {
+                        // Search in all rows for the lookupValue
+                        worksheet.eachRow((row, rowNumber) => {
+                            if (found) return;
+                            let match = false;
+                            row.eachCell(cell => {
+                                if (String(cell.value || '').toLowerCase().trim().includes(lookupValue)) {
+                                    match = true;
+                                }
+                            });
+
+                            if (match) {
+                                // Update this row
+                                itemKeys.forEach(k => {
+                                    if (k === lookupKey) return; // Don't overwrite the lookup key itself
+                                    const colIdx = headerMap[k.toLowerCase().trim()];
+                                    if (colIdx) {
+                                        row.getCell(colIdx).value = item[k];
+                                    }
+                                });
+                                row.commit();
+                                found = true;
+                            }
+                        });
+                    }
+
+                    // 3. Fallback: If not found or no lookup key, append to end
+                    if (!found) {
+                        const lastRow = worksheet.lastRow ? worksheet.lastRow.number : 1;
+                        const newRow = worksheet.getRow(lastRow + 1);
+                        itemKeys.forEach(k => {
+                            const colIdx = headerMap[k.toLowerCase().trim()];
+                            if (colIdx) {
+                                newRow.getCell(colIdx).value = item[k];
+                            } else {
+                                // If column not in header map, just append to first empty columns
+                                newRow.values = Object.values(item);
+                            }
+                        });
+                        newRow.commit();
+                    }
+                });
+            }
+
+            const safe = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
+            const p = path.join(EXPORT_DIR, safe);
+            await workbook.xlsx.writeFile(p);
+            return `/api/nayaxa/export/${safe}`;
+        } catch (err) {
+            console.error("Excel Fill Template Error:", err);
+            throw new Error(`Gagal mengisi template Excel: ${err.message}`);
+        }
     }
 };
 

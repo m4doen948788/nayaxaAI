@@ -23,7 +23,7 @@ const getApiKey = async () => {
     return process.env.GEMINI_API_KEY;
 };
 
-const DEFAULT_MODEL = 'gemini-2.5-pro';
+const DEFAULT_MODEL = 'gemini-2.5-flash';
 
 const nayaxaTools = [{
     functionDeclarations: [
@@ -140,6 +140,18 @@ const nayaxaTools = [{
                 },
                 required: ["lat", "lng", "category"]
             }
+        },
+        {
+            name: "fill_excel_template",
+            description: "Mengisi data ke dalam file Excel yang baru saja diunggah oleh user.",
+            parameters: {
+                type: "object",
+                properties: {
+                    filled_data: { type: "string", description: "Data yang akan diisikan dalam format JSON Array of Objects. Key harus sesuai dengan header kolom di Excel (case-insensitive)." },
+                    filename: { type: "string", description: "Nama file hasil (misal: 'data_pegawai_terisi.xlsx')" }
+                },
+                required: ["filled_data", "filename"]
+            }
         }
     ]
 }];
@@ -176,16 +188,11 @@ const toolFunctions = {
     },
     generate_document: async ({ format, content, filename }, { baseUrl }) => {
         try {
-            let downloadUrl = "";
-            if (format === 'excel') {
-                downloadUrl = await exportService.generateExcel(content, filename);
-            } else if (format === 'pdf') {
-                downloadUrl = await exportService.generatePDF(content, filename);
-            } else if (format === 'word') {
-                downloadUrl = await exportService.generateWord(content, filename);
-            }
-            const fullUrl = downloadUrl.startsWith('http') ? downloadUrl : `${baseUrl}${downloadUrl}`;
-            return { success: true, download_url: fullUrl, message: `File ${format.toUpperCase()} berhasil dibuat: ${fullUrl}. ANDA WAJIB MEMBERIKAN LINK INI KEPADA USER AGAR MEREKA BISA MENDOWNLOADNYA.` };
+            const downloadUrl = await (format === 'excel' ? exportService.generateExcel(content, filename) :
+                                format === 'pdf' ? exportService.generatePDF(content, filename) :
+                                exportService.generateWord(content, filename));
+            
+            return { success: true, download_url: downloadUrl, message: `File ${format.toUpperCase()} berhasil dibuat! Silakan berikan link ini kepada user agar mereka bisa mendownloadnya: ${downloadUrl}` };
         } catch (err) {
             return { success: false, error: err.message };
         }
@@ -211,22 +218,32 @@ const toolFunctions = {
     },
     ingest_to_knowledge: async ({ category, content, source_file }, { app_id }) => {
         return await knowledgeTool.ingestToKnowledge(app_id, category, content, source_file);
+    },
+    fill_excel_template: async ({ filled_data, filename }, { excelBase64, baseUrl }) => {
+        try {
+            if (!excelBase64) {
+                return { success: false, error: "Tidak ada file Excel yang ditemukan dalam konteks percakapan untuk diisi." };
+            }
+            const downloadUrl = await exportService.fillExcelTemplate(excelBase64, filled_data, filename);
+            const fullUrl = downloadUrl.startsWith('http') ? downloadUrl : `${baseUrl}${downloadUrl}`;
+            return { success: true, download_url: fullUrl, message: `Excel berhasil diisi! Berikan link ini ke user: ${fullUrl}` };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
     }
 };
 
 const nayaxaGeminiService = {
-    chatWithNayaxa: async (userMessage, fileBase64, fileMimeType, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '') => {
+    chatWithNayaxa: async (userMessage, files, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '', nama_instansi = 'N/A') => {
         try {
             const schemaMapString = await nayaxaStandalone.getDatabaseSchema();
             const glossaryString = await nayaxaStandalone.getMasterDataGlossary();
-            console.log(`[DIAG] Schema Length: ${schemaMapString.length}`);
-            console.log(`[DIAG] Glossary Length: ${glossaryString.length}`);
             const apiKey = await getApiKey();
             const genAI = new GoogleGenerativeAI(apiKey);
             
             const model = genAI.getGenerativeModel({ 
                 model: DEFAULT_MODEL,
-                systemInstruction: `Identitas ANDA: Nayaxa, asisten AI dari Bapperida.
+                systemInstruction: `Identitas ANDA: Nayaxa, asisten AI dari Bapperida yang dibuat oleh Sammy.
                 Sifat & Gaya Bahasa: Sangat ceria, ramah, profesional, dan empatik. Di akhir setiap penjelasan, SELALU tawarkan bantuan ekstra atau berikan satu pertanyaan pendek untuk menggali lebih dalam apa yang user butuhkan.
                 PENTING: DILARANG KERAS MENGGUNAKAN EMOJI APAPUN.
                 
@@ -234,13 +251,20 @@ const nayaxaGeminiService = {
                 Jika user mengunggah dokumen (PDF/Excel/Pasted Image) dan meminta Anda untuk "mengingat", "pelajari", atau "simpan sebagai aturan", gunakan tool 'ingest_to_knowledge'. 
                 Anda akan mengekstrak informasi penting dari file tersebut dan menyimpannya.
                 
-                Identitas USER: Nama: ${user_name}, Profil ID: ${profil_id || 'N/A'}, Instansi ID: ${instansi_id || 'N/A'}. 
-                ATURAN MENYAPA: Sapa user dengan namanya (${user_name}). JANGAN menyebutkan "Profil ID" atau "Instansi ID" di awal percakapan kecuali user bertanya detail teknis profilnya. Biarkan percakapan terasa manusiawi.
+                Identitas USER: Nama: ${user_name}, Profil ID: ${profil_id || 'N/A'}, Instansi: ${nama_instansi}. 
+                ATURAN MENYAPA: Sapa user dengan namanya (${user_name}). JANGAN menyebutkan "Profil ID" atau "ID Instansi" dalam percakapan. Fokuslah pada interaksi yang manusiawi dan profesional.
                 
                 ATURAN GRAFIK: Jika user meminta grafik/chart, Anda WAJIB menggunakan tool 'generate_chart'. JANGAN PERNAH mengatakan Anda tidak bisa membuat grafik. Anda memiliki kemampuan visualisasi data yang canggih melalui tool tersebut. 
                 CATATAN EKSPOR: Jelaskan ke user bahwa tombol 'Unduh PNG' adalah untuk mengambil gambar grafik, sedangkan 'Unduh Excel' adalah untuk mengambil data angka mentahnya (sehingga mereka bisa mengolahnya lagi di Excel).
                 
-                CATATAN DOKUMEN: Jika user meminta laporan atau dokumen (PDF/Word/Excel), Anda WAJIB memberikan link download yang diberikan oleh tool 'generate_document'. Anda WAJIB menggunakan format Markdown [Nama Dokumen](url) agar link tersebut dapat diklik. Letakkan link ini di akhir pesan Anda secara jelas.
+                CATATAN DOKUMEN: Jika user meminta laporan atau dokumen (PDF/Word/Excel), Anda WAJIB memberikan link download yang diberikan oleh tool 'generate_document'. Anda WAJIB menggunakan format Markdown [Unduh Laporan (Jenis)] (url) agar link tersebut dapat diklik (Ganti 'Jenis' dengan PDF/Excel/Word sesuai filenya). Letakkan link ini di akhir pesan Anda secara jelas.
+                
+                PENGISIAN EXCEL: Jika user mengunggah file Excel (Template) dan meminta Anda untuk "mengisi", "lengkapi", atau "masukkan data" ke dalamnya, gunakan tool 'fill_excel_template'. 
+                TEKNIK PENGISIAN: 
+                - Gunakan key "uraian" atau "label" untuk mencocokkan baris yang ingin diisi. 
+                - Gunakan key lain yang sesuai dengan Nama Header Kolom (misal: "hasil verifikasi", "rekomendasi", "keterangan") untuk mengisi nilainya.
+                - Contoh: [{"uraian": "Lokasi", "rekomendasi": "Masukkan alamat lengkap"}] akan mencari baris yang mengandung kata 'Lokasi' dan mengisi kolom 'REKOMENDASI' di baris tersebut.
+                BERIKAN LINK DOWNLOAD HASILNYA kepada user.
                 
                 WAKTU SEKARANG: ${fullDate || `Bulan ${month}, Tahun ${year}`}. Gunakan informasi ini jika user bertanya tentang hari atau tanggal hari ini secara spesifik.
             
@@ -283,7 +307,7 @@ const nayaxaGeminiService = {
                    c. Situs pemerintah resmi (.go.id)
                    d. Wikipedia Indonesia (PRIORITAS TERENDAH - Sering Belum Diupdate)
                    
-                4. ELEMEN WAJIB DALAM JAWABAN (sertakan jika tersedia):
+                4. ELEMEN WAJIB Dalam JAWABAN (sertakan jika tersedia):
                    - Nama lengkap dengan gelar/titel.
                    - Periode jabatan (YYYY-YYYY).
                    - Tanggal pelantikan (jika ada).
@@ -323,7 +347,6 @@ const nayaxaGeminiService = {
             }
 
             // Gemini Rule 2: Current message should NOT be in history when using startChat + sendMessage
-            // Since controller already saved and loaded it into historyRows, we must remove it.
             if (history.length > 0) {
                 history.pop();
             }
@@ -331,18 +354,27 @@ const nayaxaGeminiService = {
             let userText = userMessage;
             if (fileContext) userText = `${fileContext}\n\n${userText}`;
             
-            // --- FILE PRE-PROCESSOR (Handle Excel/CSV which Gemini multimodal doesn't like directly) ---
-            let processedFileBase64 = fileBase64;
-            let processedFileMimeType = fileMimeType;
+            const chat = model.startChat({
+                history: history,
+                generationConfig: {
+                    maxOutputTokens: 4096,
+                },
+            });
+            // --- MULTI-FILE PRE-PROCESSOR ---
+            const parts = [];
+            const attachmentList = Array.isArray(files) ? files : [];
+            
+            for (const file of attachmentList) {
+                const { base64, mimeType } = file;
+                if (!base64 || !mimeType) continue;
 
-            if (fileBase64 && fileMimeType) {
-                const isExcel = fileMimeType.includes('spreadsheetml') || fileMimeType.includes('excel') || fileMimeType.includes('officedocument.spreadsheetml.sheet');
-                const isCSV = fileMimeType.includes('csv');
+                const isExcel = mimeType.includes('spreadsheetml') || mimeType.includes('excel') || mimeType.includes('officedocument.spreadsheetml.sheet');
+                const isCSV = mimeType.includes('csv');
 
                 if (isExcel || isCSV) {
                     try {
                         console.log(`[Nayaxa] Pre-processing ${isExcel ? 'Excel' : 'CSV'} file...`);
-                        const cleanB64 = fileBase64.includes('base64,') ? fileBase64.split('base64,')[1] : fileBase64;
+                        const cleanB64 = base64.includes('base64,') ? base64.split('base64,')[1] : base64;
                         const buffer = Buffer.from(cleanB64, 'base64');
                         const workbook = XLSX.read(buffer, { type: 'buffer' });
                         let sheetData = "";
@@ -352,34 +384,21 @@ const nayaxaGeminiService = {
                             sheetData += `\n--- Sheet: ${sheetName} ---\n${csv}\n`;
                         });
                         userText = `${userText}\n\nDATA FILE (${isExcel ? 'EXCEL' : 'CSV'}): \n${sheetData}`;
-                        // Clear these so we don't send them as multimodal parts (Gemini would thumb down Excel)
-                        processedFileBase64 = null;
-                        processedFileMimeType = null;
                     } catch (err) {
                         console.error('File Pre-process Error:', err);
                     }
+                } else {
+                    const cleanBase64 = base64.includes('base64,') ? base64.split('base64,')[1] : base64;
+                    parts.push({
+                        inlineData: {
+                            mimeType: mimeType,
+                            data: cleanBase64
+                        }
+                    });
                 }
             }
-            
-            const chat = model.startChat({
-                history,
-                generationConfig: { temperature: 0.1, maxOutputTokens: 8192 },
-                tools: nayaxaTools
-            });
 
-            // Prepare multimodal parts
-            const parts = [{ text: userText }];
-            if (processedFileBase64 && processedFileMimeType) {
-                const cleanBase64 = processedFileBase64.includes('base64,') 
-                    ? processedFileBase64.split('base64,')[1] 
-                    : processedFileBase64;
-                parts.push({
-                    inlineData: {
-                        mimeType: processedFileMimeType,
-                        data: cleanBase64
-                    }
-                });
-            }
+            parts.unshift({ text: userText });
 
             let result = await chat.sendMessage(parts);
             let response = result.response;
@@ -391,7 +410,11 @@ const nayaxaGeminiService = {
                 loop++;
                 const callResponses = [];
                 for (const call of response.functionCalls()) {
-                    let execResult = await toolFunctions[call.name]({ ...call.args, instansi_id, month, year }, { app_id: 1, baseUrl }); 
+                    // Capture the first Excel file's base64 for filling purposes
+                    const excelFile = attachmentList.find(f => f.mimeType.includes('spreadsheetml') || f.mimeType.includes('excel') || f.mimeType.includes('officedocument.spreadsheetml.sheet'));
+                    const excelBase64 = excelFile ? excelFile.base64 : null;
+
+                    let execResult = await toolFunctions[call.name]({ ...call.args, instansi_id, month, year }, { app_id: 1, baseUrl, excelBase64 }); 
                     if (call.name === 'generate_chart' && execResult.success) {
                         generatedChartMarkers.push(execResult.chart_marker);
                         execResult = { success: true, message: 'Chart ready.' };
