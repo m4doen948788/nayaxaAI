@@ -58,6 +58,42 @@ export default function NayaxaAssistant({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
+  // Resizing state
+  const [width, setWidth] = useState(() => {
+    const savedWidth = localStorage.getItem('nayaxa_widget_width');
+    return savedWidth ? parseInt(savedWidth, 10) : 400;
+  });
+  const [isResizing, setIsResizing] = useState(false);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return;
+      
+      // Calculate new width: current window width - mouse X position - right offset (24px)
+      const newWidth = window.innerWidth - e.clientX - 24;
+      if (newWidth >= 400) {
+        setWidth(newWidth);
+        localStorage.setItem('nayaxa_widget_width', newWidth.toString());
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.body.style.cursor = 'default';
+    };
+
+    if (isResizing) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = 'w-resize';
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
+
   const handleVoiceInput = () => {
     const SpeechRecognitionAPI =
       (window as any).SpeechRecognition ||
@@ -289,10 +325,26 @@ export default function NayaxaAssistant({
       <AnimatePresence>
         {isOpen && (
           <motion.div
-            initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 100, opacity: 0 }}
+            initial={{ y: 100, opacity: 0 }} 
+            animate={{ y: 0, opacity: 1 }} 
+            exit={{ y: 100, opacity: 0 }}
             ref={panelRef}
-            className={`fixed bottom-6 right-6 bg-white border w-[400px] max-w-[calc(100vw-48px)] rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all z-[9999] ${isMinimized ? 'h-16' : 'h-[580px] max-h-[calc(100vh-120px)]'}`}
+            className={`fixed bottom-6 right-6 bg-white border max-w-[calc(100vw-48px)] rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all z-[9999] ${isMinimized ? 'h-16' : 'h-[580px] max-h-[calc(100vh-120px)]'}`}
+            style={{ 
+              width: isMinimized ? '400px' : `${width}px`,
+              transition: isResizing ? 'none' : 'width 0.3s ease, height 0.3s ease'
+            }}
           >
+            {/* Resize Handle - Left Edge */}
+            {!isMinimized && (
+              <div 
+                className="absolute left-0 top-0 w-1.5 h-full cursor-w-resize hover:bg-indigo-400/30 transition-colors z-[100]" 
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setIsResizing(true);
+                }}
+              />
+            )}
             <div className="bg-indigo-600 p-4 flex items-center justify-between text-white cursor-pointer" onClick={() => setIsMinimized(!isMinimized)}>
               <div className="flex items-center gap-3">
                 <Bot size={20} />
