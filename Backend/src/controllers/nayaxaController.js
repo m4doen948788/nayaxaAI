@@ -147,9 +147,10 @@ const nayaxaController = {
             const personaPromptSnippet = personaService.formatForPrompt(personaText);
 
             if (process.env.DEEPSEEK_ENABLED === 'true') {
-                // Check if all files are DeepSeek compatible (non-images)
+                // Check if all files are DeepSeek compatible (non-images, non-PDFs)
                 const hasImages = attachmentList.some(f => f.mimeType && f.mimeType.startsWith('image/'));
-                const isDeepSeekCompatible = !hasImages;
+                const hasPDFs = attachmentList.some(f => f.mimeType && f.mimeType.includes('pdf'));
+                const isDeepSeekCompatible = !hasImages && !hasPDFs;
 
                 if (isDeepSeekCompatible) {
                     try {

@@ -443,8 +443,8 @@ export default function NayaxaAssistant({
                               let li = 0;
                               let lm;
                               
-                              // Handle bold formatting **text**
-                              const boldRegex = /\*\*([^*]+)\*\*/g;
+                              // Handle bold formatting **text** (more resilient version)
+                              const boldRegex = /\*\*([\s\S]+?)\*\*(?!\*)/g;
                               
                               const processLinks = (input: string, baseKey: string) => {
                                 const subParts: (string | JSX.Element)[] = [];

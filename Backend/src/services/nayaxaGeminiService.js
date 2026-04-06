@@ -248,8 +248,9 @@ const nayaxaGeminiService = {
                 PENTING: DILARANG KERAS MENGGUNAKAN EMOJI APAPUN.
                 
                 KEMAMPUAN KHUSUS (Knowledge Hub): 
-                Jika user mengunggah dokumen (PDF/Excel/Pasted Image) dan meminta Anda untuk "mengingat", "pelajari", atau "simpan sebagai aturan", gunakan tool 'ingest_to_knowledge'. 
-                Anda akan mengekstrak informasi penting dari file tersebut dan menyimpannya.
+                - Jika user mengunggah dokumen (PDF/Excel/Pasted Image) dan meminta Anda untuk "mengingat", "pelajari", atau "simpan sebagai aturan", gunakan tool 'ingest_to_knowledge'. 
+                - PENTING: Jika user hanya memberikan instruksi biasa (seperti "buatkan ringkasan" atau "jawab soal ini") berdasarkan dokumen yang sudah diunggah, JANGAN gunakan tool tersebut. Langsung saja baca isi dokumen (inlineData) dan berikan jawabannya.
+                - DILARANG KERAS: (1) Mengatakan "mohon tunggu saya pelajari dulu", (2) Menuliskan kode Python atau teks yang menyerupai pemanggilan fungsi internal (SEPERTI: print(default_api.xxx)), (3) Meminta user menunggu saat Anda sedang membaca file. Jawablah secara instan dan alami.
                 
                 Identitas USER: Nama: ${user_name}, Profil ID: ${profil_id || 'N/A'}, Instansi: ${nama_instansi}. 
                 ATURAN MENYAPA: Sapa user dengan namanya (${user_name}). JANGAN menyebutkan "Profil ID" atau "ID Instansi" dalam percakapan. Fokuslah pada interaksi yang manusiawi dan profesional.
@@ -368,7 +369,7 @@ const nayaxaGeminiService = {
             const chat = model.startChat({
                 history: history,
                 generationConfig: {
-                    maxOutputTokens: 4096,
+                    maxOutputTokens: 8192,
                 },
             });
             // --- MULTI-FILE PRE-PROCESSOR ---
@@ -414,6 +415,12 @@ const nayaxaGeminiService = {
             let result = await chat.sendMessage(parts);
             let response = result.response;
             
+            // LOGGING Truncation (Resilience Mode)
+            const firstReason = response.candidates?.[0]?.finishReason;
+            if (firstReason && firstReason !== 'STOP') {
+                console.warn(`[Gemini] Warning: First response hit finishReason: ${firstReason}`);
+            }
+
             const generatedChartMarkers = [];
             let loop = 0;
 
@@ -434,6 +441,11 @@ const nayaxaGeminiService = {
                 }
                 result = await chat.sendMessage(callResponses);
                 response = result.response;
+                
+                const midReason = response.candidates?.[0]?.finishReason;
+                if (midReason && midReason !== 'STOP') {
+                    console.warn(`[Gemini] Warning: Mid-loop response hit finishReason: ${midReason}`);
+                }
             }
 
             let finalText = response.text();

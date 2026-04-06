@@ -290,6 +290,8 @@ const nayaxaDeepSeekService = {
                     // DeepSeek currently only supports one image via image_url in most compatible implementations
                     const cleanBase64 = base64.includes('base64,') ? base64.split('base64,')[1] : base64;
                     firstImage = { mimeType, data: cleanBase64 };
+                } else {
+                    console.warn(`[DeepSeek] Unsupported file type detected and skipped: ${mimeType}`);
                 }
             }
 
