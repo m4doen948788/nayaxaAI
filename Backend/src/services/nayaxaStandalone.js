@@ -271,481 +271,270 @@ const nayaxaStandalone = {
 
     searchInternet: async (query) => {
         try {
-            console.log(`[Nayaxa] Searching Internet (Polyglot Search - Resilience) for: ${query}`);
+            console.log(`[Nayaxa] Searching Internet (Resilience Mode 2.0) for: ${query}`);
             const results = [];
             const cheerio = require('cheerio');
 
             const userAgents = [
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
                 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-                'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-                'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1'
+                'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
             ];
-            const randomUA = userAgents[Math.floor(Math.random() * userAgents.length)];
-
             const commonHeaders = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)],
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
-                'Referer': 'https://www.google.com/',
-                'sec-ch-ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-                'sec-ch-ua-mobile': '?0',
-                'sec-ch-ua-platform': '"Windows"',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-User': '?1',
-                'Cache-Control': 'no-cache'
+                'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache'
             };
-            // Use random UA if available, otherwise fallback to our premium header
-            if (typeof userAgents !== 'undefined' && userAgents.length > 0) {
-                commonHeaders['User-Agent'] = userAgents[Math.floor(Math.random() * userAgents.length)];
-            }
+
+            let isBlocked = false;
 
             const scrapeGoogle = async (searchQuery) => {
+                if (isBlocked) return;
                 try {
                     const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}&hl=id&gl=id`;
-                    const gRes = await axios.get(googleUrl, { headers: commonHeaders, timeout: 12000 });
+                    const gRes = await axios.get(googleUrl, { headers: commonHeaders, timeout: 8000 });
+                    if (gRes.data.includes('detected unusual traffic') || gRes.data.includes('captcha')) {
+                        console.log('[Nayaxa] Google Block Detected (CAPTCHA/Traffic).');
+                        isBlocked = true;
+                        return;
+                    }
                     const $g = cheerio.load(gRes.data);
-                    
                     $g('div.g, div.ZIN6rb, div.MjjYud').each((i, el) => {
-                        const title = $g(el).find('h3, div.vv77S, div.BNeawe.vv77S.AP7Wnd').first().text();
+                        const title = $g(el).find('h3').first().text();
                         let link = $g(el).find('a').attr('href');
-                        const snippet = $g(el).find('div.s3v9rd, div.VwiC3b, div.BNeawe.s3v9rd.AP7Wnd, .VwiC3b').first().text();
-                        
-                        if (link && link.includes('/url?q=')) {
-                            link = decodeURIComponent(link.split('/url?q=')[1].split('&')[0]);
-                        }
-
+                        const snippet = $g(el).find('div.VwiC3b, div.BNeawe.s3v9rd.AP7Wnd').first().text();
+                        if (link && link.includes('/url?q=')) link = decodeURIComponent(link.split('/url?q=')[1].split('&')[0]);
                         if (title && link && link.startsWith('http') && !link.includes('google.com')) {
-                            results.push({ source: 'Google', title: title.trim(), snippet: snippet.trim() || 'Lihat detail di web...', link });
+                            results.push({ source: 'Google', title: title.trim(), snippet: snippet.trim() || '...', link });
                         }
                     });
-                } catch (err) { console.error('Google Scrape Error:', err.message); }
+                } catch (err) { 
+                    if (err.response?.status === 429) {
+                        console.log('[Nayaxa] Google Block Detected (429).');
+                        isBlocked = true;
+                    }
+                }
             };
 
             const scrapeBing = async (searchQuery) => {
                 try {
                     const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(searchQuery)}&setlang=id`;
-                    const response = await axios.get(searchUrl, { headers: commonHeaders, timeout: 12000 });
+                    const response = await axios.get(searchUrl, { headers: commonHeaders, timeout: 8000 });
                     const $ = cheerio.load(response.data);
-                    
-                    $('.b_algo, li.b_ans').each((i, el) => {
-                        const title = $(el).find('h2, h3, .b_title').text();
+                    $('.b_algo').each((i, el) => {
+                        const title = $(el).find('h2').text();
                         let link = $(el).find('a').attr('href');
-                        const snippet = $(el).find('.b_caption p, .b_algo_snippet, .b_lineclamp3, .b_vlist2col, .st, .b_snippet').text();
-                        
+                        const snippet = $(el).find('.b_caption p, .b_algo_snippet').text();
                         if (title && link && link.startsWith('http') && !link.includes('bing.com')) {
-                            results.push({ source: 'Bing', title: title.trim(), snippet: snippet.trim() || 'Klik untuk detail selengkapnya.', link });
+                            results.push({ source: 'Bing', title: title.trim(), snippet: snippet.trim() || '...', link });
                         }
                     });
-                } catch (err) { console.error('Bing Scrape Error:', err.message); }
+                } catch (err) { console.error('[Nayaxa] Bing Scrape Error:', err.message); }
             };
 
-            const scrapeBingNews = async (searchQuery) => {
-                try {
-                    const newsUrl = `https://www.bing.com/news/search?q=${encodeURIComponent(searchQuery)}&setlang=id`;
-                    const response = await axios.get(newsUrl, { headers: commonHeaders, timeout: 10000 });
-                    const $ = cheerio.load(response.data);
-                    
-                    $('.news-card, .news_card').each((i, el) => {
-                        const title = $(el).find('.title, a.title').text();
-                        const link = $(el).find('a.title').attr('href');
-                        const snippet = $(el).find('.snippet, .news_snippet').text();
-                        const source = $(el).find('.source, .news_source').text();
-                        
-                        if (title && link && link.startsWith('http')) {
-                            results.push({ 
-                                source: `Bing News (${source || 'Berita'})`, 
-                                title: title.trim(), 
-                                snippet: snippet.trim() || 'Klik untuk membaca berita lengkap...', 
-                                link 
-                            });
+            // WATERFALL API HELPER
+            const searchViaAPIs = async (searchQuery, limit = 5) => {
+                console.log(`[Nayaxa] Fetching from Trusted APIs for: ${searchQuery}`);
+                // 1. Serper.dev (Highest Priority)
+                if (process.env.SERPER_API_KEY) {
+                    try {
+                        const res = await axios.post('https://google.serper.dev/search', { q: searchQuery, gl: "id", hl: "id" }, {
+                            headers: { 'X-API-KEY': process.env.SERPER_API_KEY, 'Content-Type': 'application/json' },
+                            timeout: 10000
+                        });
+                        if (res.data?.organic?.length > 0) {
+                            return res.data.organic.slice(0, limit).map(r => ({ source: 'Google (Serper)', title: r.title, snippet: r.snippet, link: r.link }));
                         }
-                    });
-                } catch (err) { console.error('Bing News Scrape Error:', err.message); }
+                    } catch (e) { console.error('[Nayaxa] Serper API Error:', e.message); }
+                }
+                // 2. Tavily (Secondary)
+                if (process.env.TAVILY_API_KEY) {
+                    try {
+                        const res = await axios.post('https://api.tavily.com/search', { api_key: process.env.TAVILY_API_KEY, query: searchQuery, max_results: limit }, { timeout: 10000 });
+                        if (res.data?.results?.length > 0) {
+                            return res.data.results.map(r => ({ source: 'Tavily (API)', title: r.title, snippet: r.content, link: r.url }));
+                        }
+                    } catch (e) { console.error('[Nayaxa] Tavily API Error:', e.message); }
+                }
+                // 3. SerpApi (Tertiary)
+                if (process.env.SERPAPI_API_KEY) {
+                    try {
+                        const res = await axios.get('https://serpapi.com/search', {
+                            params: { q: searchQuery, gl: 'id', hl: 'id', api_key: process.env.SERPAPI_API_KEY },
+                            timeout: 10000
+                        });
+                        if (res.data?.organic_results?.length > 0) {
+                            return res.data.organic_results.slice(0, limit).map(r => ({ source: 'SerpApi', title: r.title, snippet: r.snippet, link: r.link }));
+                        }
+                    } catch (e) { console.error('[Nayaxa] SerpApi Error:', e.message); }
+                }
+                // 4. HasData (Quaternary)
+                if (process.env.HASDATA_API_KEY) {
+                    try {
+                        const res = await axios.get('https://api.hasdata.com/scrape/google/serp', {
+                            params: { q: searchQuery, gl: 'id', hl: 'id' },
+                            headers: { 'x-api-key': process.env.HASDATA_API_KEY },
+                            timeout: 10000
+                        });
+                        const organicResults = res.data?.organicResults || res.data?.organic_results;
+                        if (organicResults?.length > 0) {
+                            return organicResults.slice(0, limit).map(r => ({ source: 'HasData', title: r.title, snippet: r.snippet || r.description, link: r.link || r.url }));
+                        }
+                    } catch (e) { console.error('[Nayaxa] HasData API Error:', e.response ? e.response.data : e.message); }
+                }
+                // 5. Scrape.do (Quinary)
+                if (process.env.SCRAPEDO_API_KEY) {
+                    try {
+                        const res = await axios.get('https://api.scrape.do/plugin/google/search', {
+                            params: { q: searchQuery, token: process.env.SCRAPEDO_API_KEY, gl: 'id', hl: 'id' },
+                            timeout: 10000
+                        });
+                        const organicResults = res.data?.organicResults || res.data?.organic_results;
+                        if (organicResults?.length > 0) {
+                            return organicResults.slice(0, limit).map(r => ({ source: 'Scrape.do', title: r.title, snippet: r.snippet || r.description, link: r.link || r.url }));
+                        }
+                    } catch (e) { console.error('[Nayaxa] Scrape.do API Error:', e.response ? e.response.data : e.message); }
+                }
+                return [];
             };
 
-
-            // ============================================================
-            // QUERY AUGMENTATION: Smart Rewrite + Dynamic Period Detection
-            // ============================================================
-            const currentYear = new Date().getFullYear(); // e.g. 2026
-            const isTransitionYear = [2024, 2025, 2026, 2027].includes(currentYear);
-
-            // Dynamic period calculation
-            // Regional: elections every 5 years, last wave 2024 → 2025-2030
+            // QUERY AUGMENTATION
+            const currentYear = new Date().getFullYear();
             const latestRegionalPeriodStart = currentYear <= 2026 ? 2025 : Math.floor((currentYear - 2025) / 5) * 5 + 2025;
             const latestRegionalPeriod = `${latestRegionalPeriodStart}-${latestRegionalPeriodStart + 5}`;
-            // Previous period (still valid for cross-check: could be 2020-2025 etc)
-            const prevRegionalPeriod   = `${latestRegionalPeriodStart - 5}-${latestRegionalPeriodStart}`;
-
-            // 1. PRE-PROCESSOR: Strip noise words
-            const noiseWords = [/cari di internet/gi, /search for/gi, /siapakah/gi, /jelaskan tentang/gi, /mencari/gi, /siapa itu/gi];
-            let cleanQuery = query;
-            noiseWords.forEach(regex => { cleanQuery = cleanQuery.replace(regex, '').trim(); });
-
-            const isLeadershipQuery = /bupati|walikota|gubernur|wali kota|kepala daerah|pejabat|pelantikan|presiden|menteri/i.test(cleanQuery);
-            const isElectionQuery   = /pilkada|pilwalkot|pilgub|kpu|hasil pemilihan|pemenang pemilu/i.test(cleanQuery);
-            const isPublicFigure    = /jabatan|pemimpin|kepala(?! desa)|gubernur|bupati|walikota|menteri|direktur|presiden|wakil/i.test(cleanQuery);
-
-            let queriesToTry = [cleanQuery]; // Cleaned query always first
-            if (cleanQuery !== query) queriesToTry.push(query); // Original as backup
-
-            if (isLeadershipQuery || isElectionQuery || isPublicFigure) {
-                // Strip leading "siapa " and trailing "sekarang/saat ini"
-                let rewritten = query
-                    .replace(/^siapa\s+/i, '')
-                    .replace(/\bsekarang\b|\bsaat ini\b/gi, '')
-                    .trim();
-
-                const isRegionalLeader = /bupati|walikota|wali kota|gubernur|kepala daerah/i.test(query);
-                const isNationalLeader = /menteri|presiden|wakil presiden|dirjen|komisioner/i.test(query);
-
-                if (isRegionalLeader) {
-                    const isGubernur = /gubernur/i.test(query);
-                    const isBupati = /bupati/i.test(query);
-                    const isWalikota = /walikota|wali kota/i.test(query);
-                    const abbrev = isGubernur ? "gub" : (isBupati ? "bup" : "walkot");
-                    const regionOnly = rewritten.replace(/gubernur|bupati|walikota|wali kota/gi, '').trim();
-
-                    // MULTI-QUERY STRATEGY from prompt
-                    queriesToTry.unshift(`${rewritten} periode baru ${latestRegionalPeriod}`);
-                    queriesToTry.unshift(`Pelantikan serentak ${rewritten} 2025`); // Absolute highest priority
-                    queriesToTry.push(`Pelantikan ${rewritten} 20 Februari 2025`);
-                    queriesToTry.push(`${rewritten} terpilih 2024 hasil pilkada`);
-                    queriesToTry.push(`Pemilihan ${rewritten}`);
-                    queriesToTry.push(`Pil${abbrev} ${regionOnly} ${currentYear}`);
-                    queriesToTry.push(`Pil${abbrev} ${regionOnly} ${currentYear - 1}`);
-                    queriesToTry.push(`Pil${abbrev} ${regionOnly} ${currentYear - 2}`);
-
-                    if (isTransitionYear) {
-                        queriesToTry.push(`${rewritten} ${prevRegionalPeriod}`);
-                    }
-                } else if (isNationalLeader) {
-                    queriesToTry.unshift(`${rewritten} 2024-2029 Kabinet Indonesia Maju`);
-                    queriesToTry.push(`${rewritten} Prabowo 2024`);
-                } else if (isElectionQuery) {
-                    queriesToTry.push(`${cleanQuery} hasil resmi KPU 2024`);
-                    queriesToTry.push(`${cleanQuery} site:pilkada2024.kpu.go.id`);
-                } else {
-                    queriesToTry.push(`${rewritten} ${currentYear - 1} ${currentYear}`);
-                }
-            } else {
-                // BRANCH: GENERAL PERSON / ENTITY (e.g. Sammy Lugina)
-                // If it's not a known official query, focus on personal profiling
-                const personQuery = cleanQuery.replace(/^siapa\s+/i, '').trim();
-                if (personQuery.length > 3) {
-                    queriesToTry.push(`${personQuery} profil biografi`);
-                    queriesToTry.push(`${personQuery} karir linkedin`);
-                    queriesToTry.push(`${personQuery} prestasi profil`);
-                    queriesToTry.push(`${personQuery} berita terbaru`);
-                }
-            }
-
-            // ============================================================
-            // EXECUTE SEARCH SOURCES: TURBO MODE (PARALLEL PER QUERY)
-            // Parallelizes Google, Bing, and News search within each block,
-            // but maintains a short sequential delay between different queries.
-            // ============================================================
-            const delay = (ms) => new Promise(res => setTimeout(res, ms));
             
-            for (const q of queriesToTry) {
-                // AGGRESSIVE EARLY EXIT: If we have high-confidence results (Score > 180)
-                // This means a 2025-2030 definitive leader has already been correctly identified.
-                const highConfidenceResults = results.filter(r => r.totalScore >= 180).length;
-                if (highConfidenceResults >= 2) {
-                    console.log(`[Turbo] Cukup hasil yakin (${highConfidenceResults}), memotong antrean kueri...`);
-                    break; 
+            let cleanQuery = query.replace(/cari di internet|search for|siapakah|jelaskan tentang|mencari|siapa itu/gi, '').trim();
+            const isHeavyQuery = /bupati|walikota|gubernur|wali kota|kepala daerah|pejabat|pelantikan|presiden|menteri|pilkada|pilwalkot|pilgub|kpu/i.test(cleanQuery);
+            const isResearchIntent = /riset|penelitian|jurnal|ilmiah|biologi|antariksa|angkasa|astronomi|sains|penemuan terbaru|studi kasus|eksperimen/i.test(cleanQuery);
+            
+            let queriesToTry = [cleanQuery];
+            if (isHeavyQuery) {
+                let rewritten = cleanQuery.replace(/^siapa\s+/i, '').replace(/\bsekarang\b|\bsaat ini\b/gi, '').trim();
+                queriesToTry.unshift(`Pelantikan serentak ${rewritten} 2025`); 
+                queriesToTry.push(`${rewritten} periode ${latestRegionalPeriod}`);
+            } else if (isResearchIntent) {
+                // Add research focus for scientific topics
+                queriesToTry.unshift(`${cleanQuery} jurnal ilmiah resmi`);
+                if (/antariksa|angkasa|astronomi|mars|bulan|bintang/i.test(cleanQuery)) {
+                    queriesToTry.push(`${cleanQuery} nasa esa update`);
+                } else if (/biologi|sel|dna|genetika|kesehatan/i.test(cleanQuery)) {
+                    queriesToTry.push(`${cleanQuery} research biology journal`);
                 }
-
-                console.log(`[Turbo Search] Mencari: ${q}...`);
-                // Parallelize sources within this specific query block
-                await Promise.all([
-                    scrapeGoogle(q),
-                    scrapeBing(q),
-                    scrapeBingNews(q)
-                ]);
-
-                // Faster human-like delay between 500ms to 900ms
-                const jitter = 500 + Math.floor(Math.random() * 400);
-                await delay(jitter);
+                queriesToTry.push(`${cleanQuery} site:brin.go.id`);
             }
 
-            // Wikipedia (API) — Use enriched query to avoid stale regional articles
+            // EXECUTION: New Aggressive API Strategy
+            const hasAnyAPI = (process.env.SERPER_API_KEY || process.env.TAVILY_API_KEY || process.env.SERPAPI_API_KEY || process.env.HASDATA_API_KEY || process.env.SCRAPEDO_API_KEY);
+            
+            // 1. Try APIs first if available
+            if (hasAnyAPI) {
+                const apiLimit = isHeavyQuery ? 8 : 5;
+                const searchQ = isHeavyQuery ? queriesToTry[0] : cleanQuery;
+                const apiResults = await searchViaAPIs(searchQ, apiLimit);
+                if (apiResults.length > 0) results.push(...apiResults);
+            }
+            
+            // 2. Fetch Wikipedia Immediately
             try {
-                // For leadership queries, search with the period-specific rewritten query.
-                // This targets "Bupati Bogor 2025-2030" instead of just "Bupati Bogor",
-                // ensuring Wikipedia returns the elected official's page, not the outdated region page.
-                const wikiQuery = (isLeadershipQuery || isPublicFigure)
-                    ? (queriesToTry[0] || query)  // Use the highest-priority enriched query
-                    : query;
-
-                const wikiPromises = [
-                    axios.get(`https://id.wikipedia.org/w/api.php`, {
-                        params: { action: 'query', format: 'json', list: 'search', srsearch: wikiQuery, srlimit: 3 },
-                        headers: { 'User-Agent': 'NayaxaBot/1.1' }
-                    })
-                ];
-
-                // For leadership & transition year: also search the 2025 serentak inauguration index page
-                if ((isLeadershipQuery || isPublicFigure) && isTransitionYear) {
-                    wikiPromises.push(
-                        axios.get(`https://id.wikipedia.org/w/api.php`, {
-                            params: { action: 'query', format: 'json', list: 'search', srsearch: 'Pelantikan kepala daerah serentak Indonesia 2025', srlimit: 2 },
-                            headers: { 'User-Agent': 'NayaxaBot/1.1' }
-                        })
-                    );
-                }
-
-                const wikiResults = await Promise.allSettled(wikiPromises);
-                wikiResults.forEach(r => {
-                    if (r.status === 'fulfilled' && r.value.data.query?.search) {
-                        r.value.data.query.search.forEach(s => {
-                            results.push({
-                                source: 'Wikipedia',
-                                title: s.title,
-                                snippet: s.snippet.replace(/<[^>]*>/g, ''),
-                                link: `https://id.wikipedia.org/wiki/${encodeURIComponent(s.title)}`
-                            });
-                        });
-                    }
+                const wikiQ = isHeavyQuery ? queriesToTry[0] : cleanQuery;
+                const wikiRes = await axios.get(`https://id.wikipedia.org/w/api.php`, {
+                    params: { action: 'query', format: 'json', list: 'search', srsearch: wikiQ, srlimit: 2 },
+                    headers: { 'User-Agent': 'NayaxaBot/1.1' },
+                    timeout: 5000
                 });
+                if (wikiRes.data.query?.search) {
+                    wikiRes.data.query.search.forEach(s => results.push({ source: 'Wikipedia', title: s.title, snippet: s.snippet.replace(/<[^>]*>/g, ''), link: `https://id.wikipedia.org/wiki/${encodeURIComponent(s.title)}` }));
+                }
             } catch (err) {}
 
-            // ============================================================
-            // SCORING: Trusted Source + Period Confidence Scoring
-            // ============================================================
+            // 3. Fallback to Native Scraper if results are too few (Lapis 0)
+            if (results.length < 5) {
+                console.log(`[Nayaxa] API & Wikipedia hits too low (${results.length}), falling back to Native Scrapers...`);
+                // Give Bing an edge to reduce Google blocks but try both
+                await Promise.all([scrapeGoogle(cleanQuery), scrapeBing(queriesToTry[1] || cleanQuery)]);
+            }
+
+            // SCORING & FILTERING
             const TRUSTED_DOMAINS = [
-                { pattern: /pilkada2024\.kpu\.go\.id/, score: 120 },
-                { pattern: /kpu\.go\.id/,              score: 110 },
-                { pattern: /\.go\.id/,                 score: 100 },
-                { pattern: /detik\.com/,                score:  90 },
-                { pattern: /kompas\.com/,               score:  90 },
-                { pattern: /antara\.news|antaranews\.com/, score: 85 },
-                { pattern: /cnnindonesia\.com/,         score:  80 },
-                { pattern: /tempo\.co/,                 score:  80 },
-                { pattern: /wikipedia\.org/,            score:  40 }, // Demoted as user requested to check news first
+                // Science & Research (Global & National)
+                { pattern: /nature\.com|science\.org|sciencemag\.org|nasa\.gov|esa\.int|pubmed\.ncbi\.nlm\.nih\.gov|sciencedirect\.com|arxiv\.org|jstor\.org|cell\.com|thelancet\.com|pnas\.org|nejm\.org|scholar\.google\.com|researchgate\.net|brin\.go\.id|sinta\.kemdikbud\.go\.id|garuda\.kemdikbud\.go\.id|lipi\.go\.id|ristekdikti\.go\.id|\.edu|\.ac\.id/, score: 150, type: 'RESEARCH' },
+                // Government & Official
+                { pattern: /pilkada2024\.kpu\.go\.id/, score: 120, type: 'OFFICIAL' },
+                { pattern: /\.go\.id/, score: 110, type: 'OFFICIAL' },
+                // News Media
+                { pattern: /detik\.com|kompas\.com|cnnindonesia\.com|tempo\.co|antara\.news|antaranews\.com|liputan6\.com|tribunnews\.com|republika\.co\.id|jawapos\.com/, score: 80, type: 'NEWS' },
+                // General Info
+                { pattern: /wikipedia\.org/, score: 40, type: 'GENERAL' }
             ];
 
-            const getTrustedScore = (link) => {
-                for (const td of TRUSTED_DOMAINS) {
-                    if (td.pattern.test(link)) return td.score;
-                }
-                return 0;
-            };
-
-            /**
-             * Period Confidence Scoring:
-             * - +50 if text mentions the latest period (e.g. "2025-2030")
-             * - +30 if text mentions a year >= latestRegionalPeriodStart
-             * - -30 if the period in text is clearly expired (end year <= currentYear - 1 AND start != latestRegionalPeriodStart)
-             */
-            const getPeriodScore = (textBlock) => {
-                let score = 0;
-                const text = textBlock.toLowerCase();
-
-                // Look for explicit period patterns like "2025-2030"
-                const periodMatches = [...text.matchAll(/(20\d\d)[–\-](20\d\d)/g)];
-                for (const m of periodMatches) {
-                    const startY = parseInt(m[1]);
-                    const endY   = parseInt(m[2]);
-
-                    if (startY === latestRegionalPeriodStart) {
-                        score += 60; // Latest period explicitly mentioned (High Confidence)
-                    } else if (endY < currentYear) {
-                        score -= 50; // Period already expired → Heavy penalty
-                    } else if (startY >= currentYear - 2) {
-                        score += 20; // Recent-ish period
-                    }
-                }
-
-                // Check for single years
-                const yearMatches = [...text.matchAll(/(202[4-9])/g)];
-                yearMatches.forEach(m => {
-                    const y = parseInt(m[1]);
-                    if (y === latestRegionalPeriodStart) score += 20;
-                    if (y === 2025) score += 50; // Special 2025 boost
-                });
-
-                // TIMELINE VERIFICATION: Boost "terpilih" over "sedang menjabat" or "lama"
-                if (/pelantikan|dilantik|terpilih|pemenang/.test(text)) {
-                    const hasRecentYear = yearMatches.length > 0;
-                    if (hasRecentYear) {
-                        score += 50; // High probability it's talking about the NEW leader
-                    }
-                }
-
-                // MASSIVE BOOST for exact inauguration context to override old strong wikipedia pages
-                if (/pelantikan serentak/i.test(text) && /2025/.test(text)) {
-                    score += 200;
-                }
-                if (/20 februari 2025/i.test(text)) {
-                    score += 250;
-                }
+            // RELEVANCE FILTER (UNIVERSAL)
+            const calculateRelevance = (query, res) => {
+                const words = query.toLowerCase()
+                    .replace(/[^a-z0-9 ]/g, '')
+                    .split(/\s+/)
+                    .filter(w => w.length > 2); // Only significant words
                 
-                // Penalty for keywords indicating Acting/Temporary status (High risk of being outdated)
-                // We ONLY penalize Pj for verified leadership queries to avoid hurting regular people with similar names.
-                if (isLeadershipQuery && /penjabat|pj\.|pelaksana tugas|plt\.|pejabat sementara|pjs\./i.test(text)) {
-                    score -= 150;
-                }
-
-                // Penalty for keywords indicating old period
-                if (/mantan|demisioner|berakhir|masa jabatan habis|eks-/.test(text)) {
-                    score -= 100;
-                }
-
-                // Penalty for old period years
-                if (/2018-2023|2019-2024|2023-2024/.test(text)) {
-                    score -= 100;
-                }
-
-                return score;
+                if (words.length === 0) return 100; // Failsafe for very short queries
+                
+                const text = (res.title + ' ' + res.snippet).toLowerCase();
+                let matches = 0;
+                words.forEach(w => { if (text.includes(w)) matches++; });
+                
+                return (matches / words.length) * 100;
             };
 
-            const keywordMatch = (text) => {
-                const words = query.toLowerCase().split(' ').filter(w => w.length > 2);
-                if (words.length === 0) return true;
-                return words.some(w => text.toLowerCase().includes(w));
+            const getScore = (res) => {
+                let score = 0;
+                let type = 'GENERAL';
+                for (const td of TRUSTED_DOMAINS) {
+                    if (td.pattern.test(res.link)) {
+                        score += td.score;
+                        type = td.type;
+                    }
+                }
+                const text = (res.title + ' ' + res.snippet).toLowerCase();
+                // Research keyword detection
+                if (/abstrak|metodologi|kesimpulan|hasil penelitian|riset|jurnal|ilmiah|biologi|antariksa|angkasa|astronomi|sains|penemuan terbaru|studi kasus|eksperimen/i.test(text)) score += 30;
+                // Timeline detection (preserved)
+                if (text.includes('2025-2030') || text.includes('2025')) score += 100;
+                if (text.includes('pelantikan') || text.includes('terpilih')) score += 50;
+                if (/penjabat|pj\.|plt\.|pjs\.|pelaksana tugas/i.test(text)) score -= 100;
+                
+                return { score, type };
             };
 
-            const filteredResults = [];
-            const seenLinks = new Set();
-            for (const res of results) {
-                if (!seenLinks.has(res.link)) {
-                    const isBotBlock = res.snippet.toLowerCase().includes('please click here') || 
-                                     res.snippet.toLowerCase().includes('trouble accessing') ||
-                                     res.snippet.toLowerCase().includes('detecting unusual traffic');
-                    const trustedScore = getTrustedScore(res.link);
-                    const periodScore  = (isLeadershipQuery || isPublicFigure)
-                        ? getPeriodScore(res.title + ' ' + res.snippet)
-                        : 0;
-
-                    if (!isBotBlock && (trustedScore > 0 || keywordMatch(res.title + res.snippet) || res.source === 'Wikipedia' || res.source === 'DuckDuckGo')) {
-                        seenLinks.add(res.link);
-                        
-                        let totalScore = trustedScore + periodScore;
-
-                        filteredResults.push({ ...res, trustedScore, periodScore, totalScore });
+            const finalResults = [];
+            const seen = new Set();
+            for (const r of results) {
+                if (!seen.has(r.link)) {
+                    seen.add(r.link);
+                    
+                    // Universal Relevance Check
+                    const relevance = calculateRelevance(cleanQuery, r);
+                    if (relevance < 15 && !r.link.includes('.go.id')) { // Ignore irrelevant, except official govt sites
+                        continue;
                     }
+                    
+                    const { score, type } = getScore(r);
+                    finalResults.push({ ...r, totalScore: score, source_type: type, relevance_score: Math.round(relevance) });
                 }
             }
+            finalResults.sort((a, b) => b.totalScore - a.totalScore);
 
-            // Sort: highest combined score (trusted + period) first
-            filteredResults.sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
-
-            if (filteredResults.length === 0 && results.length > 0) {
-                results.slice(0, 3).forEach(r => filteredResults.push({ ...r, trustedScore: 0 }));
-            }
-
-            const searchDate = new Date().toLocaleDateString('id-ID', {
-                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-            });
-
-            // WATERFALL API FALLBACK
-            const hasWebScraperResults = filteredResults.some(r => ['Google', 'Bing', 'Bing News'].includes(r.source));
-            if (!hasWebScraperResults || filteredResults.length === 0) {
-                console.log('[Nayaxa] Web Scraper Kosong/Diblokir. Memulai Waterfall API Fallback...');
-                let apiSuccess = false;
-                if (!apiSuccess) {
-                    if (process.env.SERPER_API_KEY) {
-                        try {
-                            console.log('[Waterfall Lapis 1] Menggunakan Serper.dev...');
-                            const fallbackQuery = queriesToTry[0] || query;
-                            const serperData = JSON.stringify({ "q": fallbackQuery, "gl": "id", "hl": "id" });
-                            const serperRes = await axios.post('https://google.serper.dev/search', serperData, {
-                                headers: { 'X-API-KEY': process.env.SERPER_API_KEY, 'Content-Type': 'application/json' },
-                                timeout: 10000
-                            });
-                            
-                            if (serperRes.data && serperRes.data.organic && serperRes.data.organic.length > 0) {
-                                serperRes.data.organic.slice(0, 5).forEach(r => {
-                                    filteredResults.push({ source: 'Google (API Lapis 1)', title: r.title, snippet: r.snippet, link: r.link, trustedScore: getTrustedScore(r.link) });
-                                });
-                                apiSuccess = true;
-                            }
-                        } catch (err) { console.error('[Waterfall Lapis 1] Gagal:', err.message); }
-                    } else {
-                        console.log('[Waterfall Lapis 1] Lewati: SERPER_API_KEY tidak diatur.');
-                    }
-                }
-
-                // Lapis 2: Tavily API
-                if (!apiSuccess) {
-                    if (process.env.TAVILY_API_KEY) {
-                        try {
-                            console.log('[Waterfall Lapis 2] Menggunakan Tavily API...');
-                            const fallbackQuery = queriesToTry[0] || query;
-                            const tavilyData = JSON.stringify({ 
-                                api_key: process.env.TAVILY_API_KEY, 
-                                query: fallbackQuery,
-                                search_depth: "basic",
-                                max_results: 5
-                            });
-                            const tavilyRes = await axios.post('https://api.tavily.com/search', tavilyData, {
-                                headers: { 'Content-Type': 'application/json' },
-                                timeout: 10000
-                            });
-                            
-                            if (tavilyRes.data && tavilyRes.data.results && tavilyRes.data.results.length > 0) {
-                                tavilyRes.data.results.slice(0, 5).forEach(r => {
-                                    filteredResults.push({ source: 'Tavily (API Lapis 2)', title: r.title, snippet: r.content, link: r.url, trustedScore: getTrustedScore(r.url) });
-                                });
-                                apiSuccess = true;
-                            }
-                        } catch (err) { console.error('[Waterfall Lapis 2] Gagal:', err.message); }
-                    } else {
-                        console.log('[Waterfall Lapis 2] Lewati: TAVILY_API_KEY tidak diatur.');
-                    }
-                }
-
-                // Lapis 3: SerpApi
-                if (!apiSuccess) {
-                    if (process.env.SERPAPI_API_KEY) {
-                        try {
-                            console.log('[Waterfall Lapis 3] Menggunakan SerpApi...');
-                            const fallbackQuery = queriesToTry[0] || query;
-                            const serpApiRes = await axios.get(`https://serpapi.com/search.json?q=${encodeURIComponent(fallbackQuery)}&hl=id&gl=id&api_key=${process.env.SERPAPI_API_KEY}`, {
-                                timeout: 10000
-                            });
-                            
-                            if (serpApiRes.data && serpApiRes.data.organic_results && serpApiRes.data.organic_results.length > 0) {
-                                serpApiRes.data.organic_results.slice(0, 5).forEach(r => {
-                                    filteredResults.push({ source: 'Google (API Lapis 3)', title: r.title, snippet: r.snippet, link: r.link, trustedScore: getTrustedScore(r.link) });
-                                });
-                                apiSuccess = true;
-                            }
-                        } catch (err) { console.error('[Waterfall Lapis 3] Gagal:', err.message); }
-                    } else {
-                        console.log('[Waterfall Lapis 3] Lewati: SERPAPI_API_KEY tidak diatur.');
-                    }
-                }
-            }
-
-
-            if (filteredResults.length === 0) {
-                return {
-                    success: false,
-                    search_date: searchDate,
-                    message: "Informasi tidak ditemukan. Mesin pencari Nayaxa kesulitan menemukan informasi yang tepat atau mungkin dilarang oleh server tujuan. Sumber alternatif: id.wikipedia.org, pilkada2024.kpu.go.id, detik.com, kompas.com"
-                };
-            }
-
-            const labeledResults = filteredResults.slice(0, 6).map(r => ({
-                ...r,
-                trust_level: r.trustedScore > 0 ? 'TERVERIFIKASI (Sumber Terpercaya)' : 'BELUM TERVERIFIKASI'
-            }));
-
-            return {
+            const searchDate = new Date().toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            return finalResults.length > 0 ? {
                 success: true,
                 query,
                 search_date: searchDate,
-                results: labeledResults,
-                search_engine_used: 'Polyglot Search (Resilience Mode + Trusted Source Priority)'
-            };
+                results: finalResults.slice(0, 6).map(r => ({ ...r, trust_level: r.totalScore > 100 ? 'TERVERIFIKASI' : 'BELUM TERVERIFIKASI' })),
+                search_engine_used: isBlocked ? 'API Waterfall (Scraper Blocked)' : (isHeavyQuery ? 'Hybrid API (Priority)' : 'Polyglot Search 2.0')
+            } : { success: false, search_date: searchDate, message: "Informasi tidak ditemukan atau mesin pencari diblokir." };
+
         } catch (error) {
             console.error('Search Critical Error:', error.message);
-            return { error: "Terjadi gangguan koneksi internet pada server Nayaxa." };
+            return { error: "Gangguan koneksi internet pada server Nayaxa." };
         }
     }
 };

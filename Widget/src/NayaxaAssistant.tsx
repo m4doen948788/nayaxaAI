@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Bot, X, Send, FileText, Plus, Trash2, FileArchive, ChevronUp } from 'lucide-react';
+import { Bot, X, Send, FileText, Plus, Trash2, FileArchive, ChevronUp, Mic, MicOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { createNayaxaApi } from './api';
 import NayaxaChart from './NayaxaChart';
@@ -50,11 +50,60 @@ export default function NayaxaAssistant({
   const [selectedFiles, setSelectedFiles] = useState<{ base64: string, mimeType: string, name: string }[]>([]);
   const selectedFilesRef = useRef<{ base64: string, mimeType: string, name: string }[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const recognitionRef = useRef<any>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  const handleVoiceInput = () => {
+    const SpeechRecognitionAPI =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognitionAPI) {
+      alert('Browser Anda tidak mendukung fitur input suara. Coba gunakan Chrome atau Edge.');
+      return;
+    }
+
+    // If already recording, stop it
+    if (isRecording && recognitionRef.current) {
+      recognitionRef.current.stop();
+      return;
+    }
+
+    const recognition = new SpeechRecognitionAPI();
+    recognition.lang = 'id-ID';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognitionRef.current = recognition;
+
+    recognition.onstart = () => {
+      setIsRecording(true);
+    };
+
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      setInputVal(prev => (prev ? prev + ' ' + transcript : transcript));
+      setTimeout(() => inputRef.current?.focus(), 100);
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error('Speech recognition error:', event.error);
+      if (event.error !== 'aborted') {
+        alert(`Gagal menangkap suara: ${event.error}. Pastikan izin mikrofon sudah diberikan.`);
+      }
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+      recognitionRef.current = null;
+    };
+
+    recognition.start();
+  };
 
 
 
@@ -462,6 +511,18 @@ export default function NayaxaAssistant({
                   <form onSubmit={handleSend} className="flex gap-2 items-center">
                     <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} multiple />
                     <button type="button" onClick={() => fileInputRef.current?.click()} className="p-2 text-slate-400 hover:text-indigo-600"><Plus size={20} /></button>
+                    <button
+                      type="button"
+                      onClick={handleVoiceInput}
+                      title={isRecording ? 'Klik untuk berhenti merekam' : 'Klik untuk bicara'}
+                      className={`p-2 rounded-lg transition-all ${
+                        isRecording
+                          ? 'text-white bg-red-500 animate-pulse shadow-md shadow-red-200'
+                          : 'text-slate-400 hover:text-indigo-600'
+                      }`}
+                    >
+                      {isRecording ? <MicOff size={20} /> : <Mic size={20} />}
+                    </button>
                     <div className="relative flex-1">
                       <input 
                         value={inputVal} onChange={e => setInputVal(e.target.value)} 

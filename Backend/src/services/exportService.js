@@ -84,7 +84,7 @@ const exportService = {
                     `Nayaxa AI Engine v1.0 - Halaman ${i + 1}`,
                     50, 
                     doc.page.height - 50,
-                    { align: 'center' }
+                    { align: 'center', lineBreak: false }
                 );
             }
 
@@ -99,12 +99,63 @@ const exportService = {
         if (!content || !content.trim()) {
             content = "Dokumen ini kosong karena tidak ada teks yang dikirimkan.";
         }
+
+        const lines = content.split('\n');
+        const children = [
+            new Paragraph({ text: "Laporan Nayaxa AI", heading: HeadingLevel.TITLE }),
+            new Paragraph({ text: "" }) // spacing after title
+        ];
+        
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) {
+                children.push(new Paragraph({ text: "" }));
+                continue;
+            }
+            
+            let isHeading = false;
+            if (line.startsWith('# ')) {
+                children.push(new Paragraph({ text: line.replace(/^# /, ''), heading: HeadingLevel.HEADING_1 }));
+                isHeading = true;
+            } else if (line.startsWith('## ')) {
+                children.push(new Paragraph({ text: line.replace(/^## /, ''), heading: HeadingLevel.HEADING_2 }));
+                isHeading = true;
+            } else if (line.startsWith('### ')) {
+                children.push(new Paragraph({ text: line.replace(/^### /, ''), heading: HeadingLevel.HEADING_3 }));
+                isHeading = true;
+            }
+            if (isHeading) continue;
+            
+            let isBullet = false;
+            let bulletText = line;
+            if (/^(-|\*)\s/.test(line)) {
+                isBullet = true;
+                bulletText = line.replace(/^(-|\*)\s/, '');
+            } else if (/^\d+\.\s/.test(line)) {
+                // numbered list, docx doesn't have a simple numbered list without config, so we just treat as normal text but keep the number
+                // Actually, let's just render it as a normal paragraph. It already has the number in text.
+            }
+            
+            const parts = bulletText.split(/\*\*/g);
+            const textRuns = parts.map((part, index) => {
+                return new TextRun({ text: part, bold: index % 2 !== 0 });
+            });
+            
+            if (isBullet) {
+                children.push(new Paragraph({
+                    children: textRuns,
+                    bullet: { level: 0 }
+                }));
+            } else {
+                children.push(new Paragraph({
+                    children: textRuns
+                }));
+            }
+        }
+
         const doc = new Document({
             sections: [{
-                children: [
-                    new Paragraph({ text: "Nayaxa Analysis Report", heading: HeadingLevel.HEADING_1 }),
-                    new Paragraph({ text: content })
-                ]
+                children: children
             }]
         });
         const safe = filename.endsWith('.docx') ? filename : `${filename}.docx`;

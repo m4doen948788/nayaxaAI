@@ -1,6 +1,7 @@
 const nayaxaGemini = require('../services/nayaxaGeminiService');
 const nayaxaDeepSeek = require('../services/nayaxaDeepSeekService');
 const nayaxaStandalone = require('../services/nayaxaStandalone');
+const personaService = require('../services/personaService');
 const dbNayaxa = require('../config/dbNayaxa');
 const dbDashboard = require('../config/dbDashboard');
 
@@ -141,6 +142,10 @@ const nayaxaController = {
             const baseUrl = `${protocol}://${host}`;
             const nama_instansi = await nayaxaStandalone.getInstansiName(instansi_id);
 
+            // --- PERSONA: Fetch user's long-term profile (non-blocking, fail-safe) ---
+            const personaText = await personaService.getPersona(user_id);
+            const personaPromptSnippet = personaService.formatForPrompt(personaText);
+
             if (process.env.DEEPSEEK_ENABLED === 'true') {
                 // Check if all files are DeepSeek compatible (non-images)
                 const hasImages = attachmentList.some(f => f.mimeType && f.mimeType.startsWith('image/'));
@@ -150,7 +155,7 @@ const nayaxaController = {
                     try {
                         brain = 'DeepSeek';
                         responseText = await nayaxaDeepSeek.chatWithNayaxa(
-                            message, '', instansi_id, month, year, history, user_name, profil_id, baseUrl, fullDate, attachmentList, nama_instansi
+                            message, '', instansi_id, month, year, history, user_name, profil_id, baseUrl, fullDate, attachmentList, nama_instansi, personaPromptSnippet
                         );
                     } catch (deepseekError) {
                         const isRateLimit = deepseekError.response?.status === 429 || 
@@ -170,11 +175,11 @@ const nayaxaController = {
                     console.log(`[Nayaxa] Multi-file request containing images forwarded directly to Gemini.`);
                     brain = 'Gemini';
                     responseText = await nayaxaGemini.chatWithNayaxa(
-                        message, attachmentList, instansi_id, month, year, history, user_name, profil_id, '', '', '', baseUrl, fullDate, nama_instansi
+                        message, attachmentList, instansi_id, month, year, history, user_name, profil_id, '', '', '', baseUrl, fullDate, nama_instansi, personaPromptSnippet
                     );
                 }
             } else {
-                responseText = await nayaxaGemini.chatWithNayaxa(message, attachmentList, instansi_id, month, year, history, user_name, profil_id, '', '', '', baseUrl, fullDate, nama_instansi);
+                responseText = await nayaxaGemini.chatWithNayaxa(message, attachmentList, instansi_id, month, year, history, user_name, profil_id, '', '', '', baseUrl, fullDate, nama_instansi, personaPromptSnippet);
             }
 
             // 4. Save & Cache Response
@@ -188,7 +193,22 @@ const nayaxaController = {
 
             const resultData = { success: true, text: responseText, brain_used: brain, session_id: activeSessionId };
             if (!hasFiles) chatResponseCache.set(chatCacheKey, { timestamp: Date.now(), data: resultData });
-            
+
+            // --- PERSONA: Fire-and-forget background update (NEVER blocks response) ---
+            // Uses Gemini as the lightweight analyzer via a simple wrapper
+            const simpleAiAnalyzer = async (prompt) => {
+                try {
+                    const { GoogleGenerativeAI } = require('@google/generative-ai');
+                    const [keyRows] = await dbNayaxa.query('SELECT api_key FROM gemini_api_keys WHERE is_active = 1 LIMIT 1');
+                    const apiKey = keyRows.length > 0 ? keyRows[0].api_key : process.env.GEMINI_API_KEY;
+                    const genAI = new GoogleGenerativeAI(apiKey);
+                    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+                    const result = await model.generateContent(prompt);
+                    return result.response.text()?.trim() || '';
+                } catch (e) { return ''; }
+            };
+            personaService.triggerPersonaUpdate(user_id, user_name, activeSessionId, simpleAiAnalyzer);
+
             res.json(resultData);
         } catch (error) {
             console.error('Chat Error:', error);
@@ -203,11 +223,52 @@ const nayaxaController = {
             const { user_id } = req.query;
             const app_id = req.nayaxaApp.id;
             const [rows] = await dbNayaxa.query(
-                'SELECT session_id, MAX(created_at) as last_msg, SUBSTRING(MAX(content), 1, 50) as title FROM nayaxa_chat_history WHERE app_id = ? AND user_id = ? GROUP BY session_id ORDER BY last_msg DESC LIMIT 10',
+                `SELECT 
+                    h.session_id, 
+                    MAX(h.created_at) as last_msg, 
+                    SUBSTRING(MAX(h.content), 1, 50) as title,
+                    (p.id IS NOT NULL) as is_pinned
+                 FROM nayaxa_chat_history h 
+                 LEFT JOIN nayaxa_pinned_sessions p ON h.session_id = p.session_id AND p.user_id = h.user_id
+                 WHERE h.app_id = ? AND h.user_id = ? 
+                 GROUP BY h.session_id, p.id
+                 ORDER BY is_pinned DESC, last_msg DESC 
+                 LIMIT 15`,
                 [app_id, user_id]
             );
             res.json({ success: true, sessions: rows });
         } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+    },
+
+    togglePinSession: async (req, res) => {
+        try {
+            const { session_id } = req.params;
+            const { user_id, pin } = req.body;
+            const app_id = req.nayaxaApp.id;
+            
+            if (pin) {
+                const [countRows] = await dbNayaxa.query(
+                    'SELECT COUNT(*) as cnt FROM nayaxa_pinned_sessions WHERE app_id = ? AND user_id = ?',
+                    [app_id, user_id]
+                );
+                if (countRows[0].cnt >= 3) {
+                    return res.json({ success: false, message: 'Batas maksimal pin percakapan adalah 3.' });
+                }
+                await dbNayaxa.query(
+                    'INSERT IGNORE INTO nayaxa_pinned_sessions (app_id, user_id, session_id) VALUES (?, ?, ?)',
+                    [app_id, user_id, session_id]
+                );
+            } else {
+                await dbNayaxa.query(
+                    'DELETE FROM nayaxa_pinned_sessions WHERE app_id = ? AND user_id = ? AND session_id = ?',
+                    [app_id, user_id, session_id]
+                );
+            }
+            res.json({ success: true, message: pin ? 'Sesi di-pin' : 'Sesi di-unpin' });
+        } catch (error) {
+            console.error('Toggle Pin Error:', error);
+            res.status(500).json({ success: false, message: error.message });
+        }
     },
 
     getChatHistoryBySession: async (req, res) => {
