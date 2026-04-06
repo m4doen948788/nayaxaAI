@@ -63,36 +63,48 @@ export default function NayaxaAssistant({
     const savedWidth = localStorage.getItem('nayaxa_widget_width');
     return savedWidth ? parseInt(savedWidth, 10) : 400;
   });
-  const [isResizing, setIsResizing] = useState(false);
+  const [height, setHeight] = useState(() => {
+    const savedHeight = localStorage.getItem('nayaxa_widget_height');
+    return savedHeight ? parseInt(savedHeight, 10) : 580;
+  });
+  const [resizingDir, setResizingDir] = useState<'w' | 'n' | null>(null);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing) return;
+      if (!resizingDir) return;
       
-      // Calculate new width: current window width - mouse X position - right offset (24px)
-      const newWidth = window.innerWidth - e.clientX - 24;
-      if (newWidth >= 400) {
-        setWidth(newWidth);
-        localStorage.setItem('nayaxa_widget_width', newWidth.toString());
+      if (resizingDir === 'w') {
+        const newWidth = window.innerWidth - e.clientX - 24;
+        if (newWidth >= 400) {
+          setWidth(newWidth);
+          localStorage.setItem('nayaxa_widget_width', newWidth.toString());
+        }
+      } else if (resizingDir === 'n') {
+        // Calculate new height: current window height - mouse Y position - bottom offset (24px)
+        const newHeight = window.innerHeight - e.clientY - 24;
+        if (newHeight >= 580) {
+          setHeight(newHeight);
+          localStorage.setItem('nayaxa_widget_height', newHeight.toString());
+        }
       }
     };
 
     const handleMouseUp = () => {
-      setIsResizing(false);
+      setResizingDir(null);
       document.body.style.cursor = 'default';
     };
 
-    if (isResizing) {
+    if (resizingDir) {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = 'w-resize';
+      document.body.style.cursor = resizingDir === 'w' ? 'w-resize' : 'n-resize';
     }
 
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isResizing]);
+  }, [resizingDir]);
 
   const handleVoiceInput = () => {
     const SpeechRecognitionAPI =
@@ -329,21 +341,33 @@ export default function NayaxaAssistant({
             animate={{ y: 0, opacity: 1 }} 
             exit={{ y: 100, opacity: 0 }}
             ref={panelRef}
-            className={`fixed bottom-6 right-6 bg-white border max-w-[calc(100vw-48px)] rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all z-[9999] ${isMinimized ? 'h-16' : 'h-[580px] max-h-[calc(100vh-120px)]'}`}
+            className={`fixed bottom-6 right-6 bg-white border max-w-[calc(100vw-48px)] rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all z-[9999] ${isMinimized ? 'h-16' : 'max-h-[calc(100vh-120px)]'}`}
             style={{ 
               width: isMinimized ? '400px' : `${width}px`,
-              transition: isResizing ? 'none' : 'width 0.3s ease, height 0.3s ease'
+              height: isMinimized ? '64px' : `${height}px`,
+              transition: resizingDir ? 'none' : 'width 0.3s ease, height 0.3s ease'
             }}
           >
-            {/* Resize Handle - Left Edge */}
+            {/* Resize Handles */}
             {!isMinimized && (
-              <div 
-                className="absolute left-0 top-0 w-1.5 h-full cursor-w-resize hover:bg-indigo-400/30 transition-colors z-[100]" 
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  setIsResizing(true);
-                }}
-              />
+              <>
+                {/* Left Edge Handle */}
+                <div 
+                  className="absolute left-0 top-0 w-1.5 h-full cursor-w-resize hover:bg-indigo-400/30 transition-colors z-[100]" 
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setResizingDir('w');
+                  }}
+                />
+                {/* Top Edge Handle */}
+                <div 
+                  className="absolute left-0 top-0 w-full h-1.5 cursor-n-resize hover:bg-indigo-400/30 transition-colors z-[100]" 
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setResizingDir('n');
+                  }}
+                />
+              </>
             )}
             <div className="bg-indigo-600 p-4 flex items-center justify-between text-white cursor-pointer" onClick={() => setIsMinimized(!isMinimized)}>
               <div className="flex items-center gap-3">
