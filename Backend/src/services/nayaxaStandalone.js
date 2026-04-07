@@ -15,16 +15,23 @@ const nayaxaStandalone = {
     getPersonalStatistics: async (profil_id, month, year) => {
         try {
             const [activities] = await pool.query(`
-                SELECT tipe_kegiatan, COUNT(*) as total_kegiatan
-                FROM kegiatan_harian_pegawai
+                SELECT 
+                    tipe_kegiatan,
+                    CASE 
+                        WHEN UPPER(tipe_kegiatan) IN ('DLB', 'DL', 'S', 'C', 'CUTI', 'SAKIT') THEN COUNT(DISTINCT tanggal)
+                        ELSE COUNT(*)
+                    END as total_kegiatan
+                FROM kegiatan_harian_pegawai 
                 WHERE profil_pegawai_id = ? AND MONTH(tanggal) = ? AND YEAR(tanggal) = ?
                 GROUP BY tipe_kegiatan
-                ORDER BY total_kegiatan DESC
             `, [profil_id, month, year]);
 
             const [total] = await pool.query(`
-                SELECT COUNT(*) as total
-                FROM kegiatan_harian_pegawai
+                SELECT (
+                    COUNT(DISTINCT CASE WHEN UPPER(tipe_kegiatan) IN ('DLB', 'DL', 'S', 'C', 'CUTI', 'SAKIT') THEN tanggal END) +
+                    COUNT(CASE WHEN UPPER(tipe_kegiatan) NOT IN ('DLB', 'DL', 'S', 'C', 'CUTI', 'SAKIT') THEN id END)
+                ) as total
+                FROM kegiatan_harian_pegawai 
                 WHERE profil_pegawai_id = ? AND MONTH(tanggal) = ? AND YEAR(tanggal) = ?
             `, [profil_id, month, year]);
 
@@ -47,16 +54,26 @@ const nayaxaStandalone = {
                 params
             );
 
-            const filterClauseP = applyInstansiFilter('p', instansi_id);
             const [activities] = await pool.query(`
-                SELECT tipe_kegiatan, COUNT(*) as total_kegiatan
-                FROM kegiatan_harian_pegawai k
-                JOIN profil_pegawai p ON k.profil_pegawai_id = p.id
-                WHERE ${filterClauseP} AND MONTH(k.tanggal) = ? AND YEAR(k.tanggal) = ?
+                SELECT tipe_kegiatan, SUM(total_kegiatan_per_pegawai) as total_kegiatan
+                FROM (
+                    SELECT 
+                        profil_pegawai_id,
+                        tipe_kegiatan,
+                        CASE 
+                            WHEN UPPER(tipe_kegiatan) IN ('DLB', 'DL', 'S', 'C', 'CUTI', 'SAKIT') THEN COUNT(DISTINCT tanggal)
+                            ELSE COUNT(*)
+                        END as total_kegiatan_per_pegawai
+                    FROM kegiatan_harian_pegawai k
+                    JOIN profil_pegawai p ON k.profil_pegawai_id = p.id
+                    WHERE ${instansi_id ? 'p.instansi_id = ?' : '1=1'} AND MONTH(k.tanggal) = ? AND YEAR(k.tanggal) = ?
+                    GROUP BY profil_pegawai_id, tipe_kegiatan
+                ) as sub
                 GROUP BY tipe_kegiatan
                 ORDER BY total_kegiatan DESC
-            `, [...params, month, year]);
+            `, instansi_id ? [instansi_id, month, year] : [month, year]);
 
+            const filterClauseP = applyInstansiFilter('p', instansi_id);
             const [activePegawai] = await pool.query(`
                 SELECT COUNT(DISTINCT k.profil_pegawai_id) as active_count
                 FROM kegiatan_harian_pegawai k
@@ -82,21 +99,24 @@ const nayaxaStandalone = {
 
     calculateScoring: async (instansi_id, month, year) => {
         try {
-            const filterClauseP = applyInstansiFilter('p', instansi_id);
             const params = instansi_id ? [month, year, instansi_id] : [month, year];
 
             const [scores] = await pool.query(`
                 SELECT 
                     p.id, p.nama_lengkap, b.nama_bidang, j.jabatan,
-                    COUNT(k.id) as total_kegiatan,
+                    (
+                        COUNT(DISTINCT CASE WHEN UPPER(k.tipe_kegiatan) IN ('DLB', 'DL', 'S', 'C', 'CUTI', 'SAKIT') THEN k.tanggal END) +
+                        COUNT(CASE WHEN k.tipe_kegiatan IS NOT NULL AND UPPER(k.tipe_kegiatan) NOT IN ('DLB', 'DL', 'S', 'C', 'CUTI', 'SAKIT') THEN k.id END)
+                    ) as total_kegiatan,
                     SUM(CASE WHEN k.tipe_kegiatan LIKE 'RM%' THEN 2 ELSE 1 END) as weighted_score
                 FROM profil_pegawai p
-                LEFT JOIN kegiatan_harian_pegawai k ON p.id = k.profil_pegawai_id AND MONTH(k.tanggal) = ? AND YEAR(k.tanggal) = ?
+                LEFT JOIN kegiatan_harian_pegawai k ON p.id = k.profil_pegawai_id 
+                    AND (k.tanggal IS NULL OR (MONTH(k.tanggal) = ? AND YEAR(k.tanggal) = ?))
                 LEFT JOIN master_bidang_instansi b ON p.bidang_id = b.id
                 LEFT JOIN master_jabatan j ON p.jabatan_id = j.id
-                WHERE ${filterClauseP} AND p.is_active = 1
-                GROUP BY p.id
-                ORDER BY weighted_score DESC
+                WHERE ${instansi_id ? 'p.instansi_id = ?' : '1=1'} AND p.is_active = 1
+                GROUP BY p.id, p.nama_lengkap, b.nama_bidang, j.jabatan
+                ORDER BY weighted_score DESC, total_kegiatan DESC
             `, params);
 
             const highestScore = scores.length > 0 ? scores[0].weighted_score : 1;
@@ -155,8 +175,25 @@ const nayaxaStandalone = {
             if (lastM === 0) { lastM = 12; lastY -= 1; }
             const paramsPast = instansi_id ? [instansi_id, lastM, lastY] : [lastM, lastY];
 
-            const [curr] = await pool.query(`SELECT COUNT(k.id) as cnt FROM kegiatan_harian_pegawai k JOIN profil_pegawai p ON k.profil_pegawai_id = p.id WHERE ${filterClauseP} AND MONTH(k.tanggal) = ? AND YEAR(k.tanggal) = ?`, paramsCurrent);
-            const [past] = await pool.query(`SELECT COUNT(k.id) as cnt FROM kegiatan_harian_pegawai k JOIN profil_pegawai p ON k.profil_pegawai_id = p.id WHERE ${filterClauseP} AND MONTH(k.tanggal) = ? AND YEAR(k.tanggal) = ?`, paramsPast);
+            const [curr] = await pool.query(`
+                SELECT (
+                    COUNT(DISTINCT CASE WHEN UPPER(k.tipe_kegiatan) IN ('DLB', 'DL', 'S', 'C', 'CUTI', 'SAKIT') THEN k.tanggal END) +
+                    COUNT(CASE WHEN k.tipe_kegiatan IS NOT NULL AND UPPER(k.tipe_kegiatan) NOT IN ('DLB', 'DL', 'S', 'C', 'CUTI', 'SAKIT') THEN k.id END)
+                ) as cnt 
+                FROM kegiatan_harian_pegawai k 
+                JOIN profil_pegawai p ON k.profil_pegawai_id = p.id 
+                WHERE ${filterClauseP} AND MONTH(k.tanggal) = ? AND YEAR(k.tanggal) = ?
+            `, paramsCurrent);
+
+            const [past] = await pool.query(`
+                SELECT (
+                    COUNT(DISTINCT CASE WHEN UPPER(k.tipe_kegiatan) IN ('DLB', 'DL', 'S', 'C', 'CUTI', 'SAKIT') THEN k.tanggal END) +
+                    COUNT(CASE WHEN k.tipe_kegiatan IS NOT NULL AND UPPER(k.tipe_kegiatan) NOT IN ('DLB', 'DL', 'S', 'C', 'CUTI', 'SAKIT') THEN k.id END)
+                ) as cnt 
+                FROM kegiatan_harian_pegawai k 
+                JOIN profil_pegawai p ON k.profil_pegawai_id = p.id 
+                WHERE ${filterClauseP} AND MONTH(k.tanggal) = ? AND YEAR(k.tanggal) = ?
+            `, paramsPast);
 
             const c = curr[0].cnt; const p = past[0].cnt;
             const growth = p > 0 ? (((c - p) / p) * 100).toFixed(2) : 0;
@@ -207,6 +244,45 @@ const nayaxaStandalone = {
             const [rows] = await pool.query(up.includes('LIMIT') ? q : `${q} LIMIT 100`);
             return rows;
         } catch (error) { return { error: error.message }; }
+    },
+
+    searchLibrary: async (query) => {
+        try {
+            // 1. Search Files (dbDashboard)
+            const [fileRows] = await pool.query(`
+                SELECT id, nama_file, path, ukuran, uploaded_at 
+                FROM dokumen_upload 
+                WHERE (nama_file LIKE ? OR path LIKE ?) AND is_deleted = 0
+                LIMIT 5
+            `, [`%${query}%`, `%${query}%`]);
+            
+            const files = fileRows.map(r => ({
+                id: r.id,
+                type: 'FILE',
+                title: r.nama_file,
+                url: r.path,
+                details: `Ukuran: ${(r.ukuran / 1024 / 1024).toFixed(2)} MB, Uploaded: ${new Date(r.uploaded_at).toLocaleDateString('id-ID')}`
+            }));
+
+            // 2. Search Knowledge (dbNayaxa)
+            const [knowledgeRows] = await dbNayaxa.query(`
+                SELECT id, category, content, source_file, created_at
+                FROM nayaxa_knowledge
+                WHERE (category LIKE ? OR content LIKE ? OR source_file LIKE ?)
+                AND is_active = 1
+                LIMIT 3
+            `, [`%${query}%`, `%${query}%`, `%${query}%`]);
+
+            const knowledge = knowledgeRows.map(r => ({
+                id: r.id,
+                type: 'KNOWLEDGE',
+                title: r.source_file || r.category || 'Materi Belajar',
+                content_preview: r.content.substring(0, 500) + '...',
+                details: `Kategori: ${r.category || 'Umum'}, Tanggal: ${new Date(r.created_at).toLocaleDateString('id-ID')}`
+            }));
+
+            return [...files, ...knowledge];
+        } catch (error) { throw error; }
     },
 
     getNearbyPlaces: async (lat, lng, query) => {

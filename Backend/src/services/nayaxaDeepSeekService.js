@@ -46,6 +46,10 @@ const toolFunctions = {
             return { success: false, error: err.message };
         }
     },
+    search_files_and_knowledge: async ({ query }) => {
+        const results = await nayaxaStandalone.searchLibrary(query);
+        return { search_results: results };
+    },
     fill_excel_template: async ({ filled_data, filename }, { excelBase64, baseUrl }) => {
         try {
             if (!excelBase64) {
@@ -140,6 +144,20 @@ const DEEPSEEK_TOOLS = [
             required: ["category", "content", "source_file"] 
         } 
     } },
+    { 
+        type: "function", 
+        function: { 
+            name: "search_files_and_knowledge", 
+            description: "Mencari file asli atau pengetahuan (knowledge base) yang tersimpan di sistem Nayaxa.", 
+            parameters: { 
+                type: "object", 
+                properties: { 
+                    query: { type: "string", description: "Nama file, materi, atau kata kunci pencarian dokumen" } 
+                }, 
+                required: ["query"] 
+            } 
+        } 
+    },
     { type: "function", function: { 
         name: "fill_excel_template", 
         description: "Mengisi data ke dalam file Excel yang baru saja diunggah oleh user.", 
@@ -170,7 +188,12 @@ const nayaxaDeepSeekService = {
             
             ATURAN GRAFIK: Jika user meminta grafik/chart, Anda WAJIB menggunakan tool 'generate_chart'. JANGAN PERNAH memberikan kode Python atau CSV mentah. Gunakan tool tersebut untuk membuat visualisasi interaktif.
             CATATAN EKSPOR: Jelaskan ke user bahwa tombol 'Unduh PNG' adalah untuk mengambil gambar grafik, sedangkan 'Unduh Excel' adalah untuk mengambil data angka mentahnya agar mereka bisa mengolahnya lagi di Excel.
-            CATATAN DOKUMEN: Jika user meminta laporan atau dokumen (PDF/Word/Excel), Anda WAJIB memberikan link download yang diberikan oleh tool 'generate_document'. Anda WAJIB menggunakan format Markdown [Unduh Laporan (Jenis)] (url) agar link tersebut dapat diklik (Ganti 'Jenis' dengan PDF/Excel/Word sesuai filenya). Letakkan link ini di akhir pesan Anda secara jelas.
+            CATATAN DOKUMEN & FILE: 
+            - Jika user meminta laporan baru, gunakan tool 'generate_document'. 
+            - Jika user bertanya tentang "Pencarian Dokumen/File", atau ingin "mencari file yang sudah ada", Anda WAJIB menggunakan tool 'search_files_and_knowledge'. 
+            - Tool ini akan mencari di database file (DOKUMEN_UPLOAD) dan database pengetahuan (NAYAXA_KNOWLEDGE).
+            - Berikan link download untuk hasil berkategori [FILE] dan ringkasan informasi untuk hasil [KNOWLEDGE].
+            - Format Link: [Unduh (Nama File)](URL_DARI_TOOL). Ganti 'Nama File' dengan nama asli filenya. Letakkan link ini secara menonjol di akhir pesan Anda secara jelas.
             
             PENGISIAN EXCEL: Jika user mengunggah file Excel (Template) dan meminta Anda untuk "mengisi", "lengkapi", atau "masukkan data" ke dalamnya, gunakan tool 'fill_excel_template'. 
             TEKNIK PENGISIAN: 
