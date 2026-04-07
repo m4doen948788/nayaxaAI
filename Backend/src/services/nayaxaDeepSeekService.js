@@ -1,5 +1,6 @@
 const axios = require('axios');
 const XLSX = require('xlsx');
+const mammoth = require('mammoth');
 const dbDashboard = require('../config/dbDashboard');
 const nayaxaStandalone = require('./nayaxaStandalone');
 const exportService = require('./exportService');
@@ -290,12 +291,13 @@ const nayaxaDeepSeekService = {
                 const { base64, mimeType } = file;
                 if (!base64 || !mimeType) continue;
 
-                const isExcel = mimeType.includes('spreadsheetml') || mimeType.includes('excel') || mimeType.includes('officedocument.spreadsheetml.sheet');
-                const isCSV = mimeType.includes('csv');
+                const isExcel = mimeType?.includes('spreadsheetml') || mimeType?.includes('excel') || mimeType?.includes('officedocument.spreadsheetml.sheet');
+                const isCSV = mimeType?.includes('csv');
+                const extension = file.name ? file.name.split('.').pop().toLowerCase() : '';
                 
-                if (isExcel || isCSV) {
+                if (isExcel || isCSV || extension === 'xlsx' || extension === 'xls' || extension === 'csv') {
                     try {
-                        console.log(`[DeepSeek] Pre-processing ${isExcel ? 'Excel' : 'CSV'} file...`);
+                        console.log(`[DeepSeek] Pre-processing ${isExcel || extension.includes('xls') ? 'Excel' : 'CSV'} file...`);
                         const cleanB64 = base64.includes('base64,') ? base64.split('base64,')[1] : base64;
                         const buffer = Buffer.from(cleanB64, 'base64');
                         const workbook = XLSX.read(buffer, { type: 'buffer' });
@@ -305,16 +307,26 @@ const nayaxaDeepSeekService = {
                             const csv = XLSX.utils.sheet_to_csv(sheet);
                             sheetData += `\n--- Sheet: ${sheetName} ---\n${csv}\n`;
                         });
-                        fileContext = (fileContext ? fileContext + '\n\n' : '') + `DATA FILE (${isExcel ? 'EXCEL' : 'CSV'}):\n${sheetData}`;
+                        fileContext = (fileContext ? fileContext + '\n\n' : '') + `DATA FILE (${isExcel || extension.includes('xls') ? 'EXCEL' : 'CSV'}):\n${sheetData}`;
                     } catch (err) {
                         console.error('DeepSeek File Pre-process Error:', err);
                     }
-                } else if (mimeType.startsWith('image/') && !firstImage) {
+                } else if (mimeType?.includes('wordprocessingml') || mimeType?.includes('msword') || extension === 'docx' || extension === 'doc') {
+                    try {
+                        console.log(`[DeepSeek] Pre-processing Word file...`);
+                        const cleanB64 = base64.includes('base64,') ? base64.split('base64,')[1] : base64;
+                        const buffer = Buffer.from(cleanB64, 'base64');
+                        const wordResult = await mammoth.extractRawText({ buffer: buffer });
+                        fileContext = (fileContext ? fileContext + '\n\n' : '') + `DATA FILE (WORD):\n${wordResult.value}`;
+                    } catch (err) {
+                        console.error('DeepSeek Word Pre-process Error:', err);
+                    }
+                } else if (mimeType?.startsWith('image/') && !firstImage) {
                     // DeepSeek currently only supports one image via image_url in most compatible implementations
                     const cleanBase64 = base64.includes('base64,') ? base64.split('base64,')[1] : base64;
                     firstImage = { mimeType, data: cleanBase64 };
                 } else {
-                    console.warn(`[DeepSeek] Unsupported file type detected and skipped: ${mimeType}`);
+                    console.warn(`[DeepSeek] Unsupported file type detected or skipped: ${mimeType} (${file.name})`);
                 }
             }
 

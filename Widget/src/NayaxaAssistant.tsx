@@ -282,6 +282,7 @@ export default function NayaxaAssistant({
       if (validResults.length > 0) {
         selectedFilesRef.current = [...selectedFilesRef.current, ...validResults];
         setSelectedFiles([...selectedFilesRef.current]);
+        setTimeout(() => inputRef.current?.focus(), 100);
       }
     });
   };
@@ -585,7 +586,7 @@ export default function NayaxaAssistant({
                     </div>
                   )}
                   <form onSubmit={handleSend} className="flex gap-2 items-center">
-                    <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} multiple />
+                    <input type="file" ref={fileInputRef} className="hidden" accept="image/*,.pdf,.xlsx,.csv,.txt,.docx,.doc" onChange={handleFileChange} multiple />
                     <button type="button" onClick={() => fileInputRef.current?.click()} className="p-2 text-slate-400 hover:text-indigo-600"><Plus size={20} /></button>
                     <button
                       type="button"
@@ -603,7 +604,7 @@ export default function NayaxaAssistant({
                       <input 
                         value={inputVal} onChange={e => setInputVal(e.target.value)} 
                         className="w-full bg-slate-50 border rounded-xl py-2 px-3 text-sm focus:outline-none focus:border-indigo-500" 
-                        placeholder="Tanya Nayaxa..." 
+                        placeholder="Tanya Nayaxa (Word/Excel/PDF)..." 
                         disabled={isTyping}
                       />
                       <button type="submit" disabled={!inputVal.trim() && selectedFiles.length === 0} className="absolute right-1.5 top-1.5 p-1 bg-indigo-600 text-white rounded-lg disabled:opacity-50"><Send size={14} /></button>
