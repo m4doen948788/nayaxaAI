@@ -237,6 +237,53 @@ const nayaxaStandalone = {
         }
     },
 
+    getPegawaiProfile: async (profil_id) => {
+        try {
+            if (!profil_id) return null;
+            // 1. Fetch Basic Profile
+            const [rows] = await pool.query(`
+                SELECT 
+                    p.id, p.nama_lengkap, p.nip, p.bidang_id,
+                    b.nama_bidang as bidang, 
+                    j.jabatan,
+                    i.instansi as nama_instansi
+                FROM profil_pegawai p
+                LEFT JOIN master_bidang_instansi b ON p.bidang_id = b.id
+                LEFT JOIN master_jabatan j ON p.jabatan_id = j.id
+                LEFT JOIN master_instansi_daerah i ON p.instansi_id = i.id
+                WHERE p.id = ?
+                LIMIT 1
+            `, [profil_id]);
+            
+            if (rows.length === 0) return null;
+            const profile = rows[0];
+
+            // 2. Fetch Managed Instances (Pengampuan)
+            if (profile.bidang_id) {
+                const [instansis] = await pool.query(`
+                    SELECT DISTINCT i.instansi
+                    FROM mapping_bidang_pengampu m
+                    JOIN master_instansi_daerah i ON m.instansi_id = i.id
+                    WHERE m.bidang_instansi_id = ?
+                `, [profile.bidang_id]);
+                profile.instansi_diampu = instansis.map(r => r.instansi);
+
+                const [urusans] = await pool.query(`
+                    SELECT DISTINCT u.urusan
+                    FROM mapping_bidang_pengampu m
+                    JOIN master_urusan u ON m.urusan_id = u.id
+                    WHERE m.bidang_instansi_id = ?
+                `, [profile.bidang_id]);
+                profile.urusan_diampu = urusans.map(r => r.urusan);
+            }
+
+            return profile;
+        } catch (error) {
+            console.error('Error fetching Pegawai Profile:', error);
+            return null;
+        }
+    },
+
     executeReadOnlyQuery: async (q) => {
         try {
             const up = q.trim().toUpperCase();

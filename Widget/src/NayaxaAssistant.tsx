@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Bot, X, Send, FileText, Plus, Trash2, FileArchive, ChevronUp, Mic, MicOff } from 'lucide-react';
+import { Bot, X, Send, FileText, Plus, Trash2, FileArchive, ChevronUp, Mic, MicOff, Volume2, VolumeX } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { createNayaxaApi } from './api';
 import NayaxaChart from './NayaxaChart';
@@ -51,6 +51,8 @@ export default function NayaxaAssistant({
   const selectedFilesRef = useRef<{ base64: string, mimeType: string, name: string }[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isTtsEnabled, setIsTtsEnabled] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const recognitionRef = useRef<any>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -59,14 +61,8 @@ export default function NayaxaAssistant({
   const panelRef = useRef<HTMLDivElement>(null);
 
   // Resizing state
-  const [width, setWidth] = useState(() => {
-    const savedWidth = localStorage.getItem('nayaxa_widget_width');
-    return savedWidth ? parseInt(savedWidth, 10) : 400;
-  });
-  const [height, setHeight] = useState(() => {
-    const savedHeight = localStorage.getItem('nayaxa_widget_height');
-    return savedHeight ? parseInt(savedHeight, 10) : 580;
-  });
+  const [width, setWidth] = useState(400);
+  const [height, setHeight] = useState(580);
   const [resizingDir, setResizingDir] = useState<'w' | 'n' | null>(null);
 
   useEffect(() => {
@@ -75,17 +71,10 @@ export default function NayaxaAssistant({
       
       if (resizingDir === 'w') {
         const newWidth = window.innerWidth - e.clientX - 24;
-        if (newWidth >= 400) {
-          setWidth(newWidth);
-          localStorage.setItem('nayaxa_widget_width', newWidth.toString());
-        }
+        if (newWidth >= 400) setWidth(newWidth);
       } else if (resizingDir === 'n') {
-        // Calculate new height: current window height - mouse Y position - bottom offset (24px)
         const newHeight = window.innerHeight - e.clientY - 24;
-        if (newHeight >= 580) {
-          setHeight(newHeight);
-          localStorage.setItem('nayaxa_widget_height', newHeight.toString());
-        }
+        if (newHeight >= 580) setHeight(newHeight);
       }
     };
 
@@ -151,6 +140,63 @@ export default function NayaxaAssistant({
     };
 
     recognition.start();
+  };
+
+  const speak = (text: string) => {
+    if (!('speechSynthesis' in window)) return;
+    
+    // Always stop previous speech
+    window.speechSynthesis.cancel();
+
+    if (!isTtsEnabled || !text) {
+      setIsSpeaking(false);
+      return;
+    }
+
+    // Clean text: remove charts, markdown codes, and long URLs
+    let cleanText = text
+      .replace(/\[NAYAXA_CHART\].*?\[\/NAYAXA_CHART\]/gs, 'Tabel data tidak dibacakan.') 
+      .replace(/\*\*|__/g, '') 
+      .replace(/#+\s/g, '') 
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1') 
+      .replace(/https?:\/\/[^\s]+/g, 'tautan')
+      .replace(/```[\s\S]*?```/g, 'Blok kode tidak dibacakan.')
+      .trim();
+
+    if (!cleanText) return;
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    
+    // Auto detect language (simple)
+    const isIndonesian = /[aeiou]ng|[aeiou]k |adalah|yang|dan|saya|kami|instansi|bidang/i.test(cleanText);
+    utterance.lang = isIndonesian ? 'id-ID' : 'en-US';
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+
+    const voices = window.speechSynthesis.getVoices();
+    // Prioritize female voices
+    const femaleVoice = voices.find(v => 
+      v.lang.startsWith(utterance.lang.split('-')[0]) && 
+      (v.name.toLowerCase().includes('female') || 
+       v.name.toLowerCase().includes('google') || 
+       v.name.toLowerCase().includes('zira') || 
+       v.name.toLowerCase().includes('gadis') || 
+       v.name.toLowerCase().includes('susan') || 
+       v.name.toLowerCase().includes('putri'))
+    );
+
+    if (femaleVoice) utterance.voice = femaleVoice;
+
+    utterance.onstart = () => setIsSpeaking(true);
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const stopSpeaking = () => {
+    window.speechSynthesis.cancel();
+    setIsSpeaking(false);
   };
 
 
@@ -242,6 +288,10 @@ export default function NayaxaAssistant({
         setLastBrainUsed(res.brain_used);
         setSessionId(res.session_id);
         fetchSessions();
+        // Trigger TTS
+        if (isTtsEnabled) {
+          speak(res.text);
+        }
       }
     } catch (err) {
       setMessages(prev => [...prev, { role: 'assistant', text: 'Maaf, gagal terhubung ke server Nayaxa.' }]);
@@ -379,8 +429,22 @@ export default function NayaxaAssistant({
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={(e) => { e.stopPropagation(); setShowHistory(!showHistory); }} className="p-1.5 hover:bg-white/10 rounded-lg"><FileText size={16} /></button>
-                <button onClick={(e) => { e.stopPropagation(); startNewChat(); }} className="p-1.5 hover:bg-white/10 rounded-lg"><Plus size={16} /></button>
+                <button onClick={(e) => { e.stopPropagation(); setShowHistory(!showHistory); }} className="p-1.5 hover:bg-white/10 rounded-lg" title="Riwayat"><FileText size={16} /></button>
+                <button 
+                  onClick={(e) => { 
+                    e.stopPropagation(); 
+                    if (isSpeaking) {
+                      stopSpeaking();
+                    } else {
+                      setIsTtsEnabled(!isTtsEnabled);
+                    }
+                  }} 
+                  className={`p-1.5 rounded-lg transition-colors ${isTtsEnabled ? 'bg-white/20' : 'hover:bg-white/10'} ${isSpeaking ? 'animate-pulse text-yellow-300' : ''}`}
+                  title={isTtsEnabled ? "Matikan Suara" : "Aktifkan Suara"}
+                >
+                  {isTtsEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+                </button>
+                <button onClick={(e) => { e.stopPropagation(); startNewChat(); }} className="p-1.5 hover:bg-white/10 rounded-lg" title="Sesi Baru"><Plus size={16} /></button>
                 <div className="w-px h-4 bg-white/20 mx-1" />
                 <button className="p-1.5 hover:bg-white/10 rounded-lg"><ChevronUp size={16} className={`transition-transform ${isMinimized ? 'rotate-180' : ''}`} /></button>
                 <button onClick={(e) => { e.stopPropagation(); setIsOpen(false); }} className="p-1.5 hover:bg-white/10 rounded-lg"><X size={16} /></button>

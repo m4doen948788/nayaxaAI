@@ -128,7 +128,7 @@ const nayaxaController = {
                 parts: [{ text: h.content }]
             }));
 
-            // 3. Routing
+            // 3. Routing (Resilient Fallback System)
             let responseText = '';
             let brain = 'Gemini';
 
@@ -141,46 +141,57 @@ const nayaxaController = {
             const host = req.get('host');
             const baseUrl = `${protocol}://${host}`;
             const nama_instansi = await nayaxaStandalone.getInstansiName(instansi_id);
+            const userProfile = await nayaxaStandalone.getPegawaiProfile(profil_id);
 
-            // --- PERSONA: Fetch user's long-term profile (non-blocking, fail-safe) ---
+            // --- PERSONA: Fetch user's long-term profile ---
             const personaText = await personaService.getPersona(user_id);
             const personaPromptSnippet = personaService.formatForPrompt(personaText);
 
-            if (process.env.DEEPSEEK_ENABLED === 'true') {
-                // Check if all files are DeepSeek compatible (non-images, non-PDFs)
-                const hasImages = attachmentList.some(f => f.mimeType && f.mimeType.startsWith('image/'));
-                const hasPDFs = attachmentList.some(f => f.mimeType && f.mimeType.includes('pdf'));
-                const isDeepSeekCompatible = !hasImages && !hasPDFs;
+            const isDeepSeekEnabled = process.env.DEEPSEEK_ENABLED === 'true';
+            const hasImages = attachmentList.some(f => f.mimeType && f.mimeType.startsWith('image/'));
+            const hasPDFs = attachmentList.some(f => f.mimeType && f.mimeType.includes('pdf'));
+            const isDeepSeekCompatible = !hasImages && !hasPDFs;
 
-                if (isDeepSeekCompatible) {
-                    try {
-                        brain = 'DeepSeek';
-                        responseText = await nayaxaDeepSeek.chatWithNayaxa(
-                            message, '', instansi_id, month, year, history, user_name, profil_id, baseUrl, fullDate, attachmentList, nama_instansi, personaPromptSnippet
-                        );
-                    } catch (deepseekError) {
-                        const isRateLimit = deepseekError.response?.status === 429 || 
-                                            deepseekError.message?.includes('429') || 
-                                            deepseekError.message?.includes('quota');
-                        if (isRateLimit) {
-                            console.warn('[Nayaxa] DeepSeek RPM limit hit. Falling back to Gemini...');
-                            brain = 'Gemini (Fallback)';
-                            responseText = await nayaxaGemini.chatWithNayaxa(
-                                message, attachmentList, instansi_id, month, year, history, user_name, profil_id, '', '', '', baseUrl, fullDate, nama_instansi
-                            );
-                        } else {
-                            throw deepseekError;
-                        }
+            const tryGemini = async (isFallback = false) => {
+                brain = isFallback ? 'Gemini (Fallback)' : 'Gemini';
+                return await nayaxaGemini.chatWithNayaxa(
+                    message, attachmentList, instansi_id, month, year, history, user_name, profil_id, '', '', '', baseUrl, fullDate, nama_instansi, personaPromptSnippet, userProfile
+                );
+            };
+
+            const tryDeepSeek = async (isFallback = false) => {
+                brain = isFallback ? 'DeepSeek (Fallback)' : 'DeepSeek';
+                return await nayaxaDeepSeek.chatWithNayaxa(
+                    message, '', instansi_id, month, year, history, user_name, profil_id, baseUrl, fullDate, attachmentList, nama_instansi, personaPromptSnippet
+                );
+            };
+
+            if (isDeepSeekEnabled && isDeepSeekCompatible) {
+                try {
+                    responseText = await tryDeepSeek();
+                } catch (dsError) {
+                    const isDsOverloaded = dsError.response?.status === 429 || dsError.message?.includes('429') || dsError.message?.includes('quota');
+                    if (isDsOverloaded) {
+                        console.warn('[Nayaxa] DeepSeek overloaded/limited, falling back to Gemini...');
+                        responseText = await tryGemini(true);
+                    } else {
+                        throw dsError;
                     }
-                } else {
-                    console.log(`[Nayaxa] Multi-file request containing images forwarded directly to Gemini.`);
-                    brain = 'Gemini';
-                    responseText = await nayaxaGemini.chatWithNayaxa(
-                        message, attachmentList, instansi_id, month, year, history, user_name, profil_id, '', '', '', baseUrl, fullDate, nama_instansi, personaPromptSnippet
-                    );
                 }
             } else {
-                responseText = await nayaxaGemini.chatWithNayaxa(message, attachmentList, instansi_id, month, year, history, user_name, profil_id, '', '', '', baseUrl, fullDate, nama_instansi, personaPromptSnippet);
+                try {
+                    responseText = await tryGemini();
+                } catch (geminiError) {
+                    const isGeminiOverloaded = geminiError.status === 503 || geminiError.status === 429 || 
+                                              geminiError.message?.includes('503') || geminiError.message?.includes('429');
+                    // Fallback to DeepSeek ONLY if compatible (no images/PDFs) and enabled
+                    if (isGeminiOverloaded && isDeepSeekEnabled && isDeepSeekCompatible) {
+                        console.warn('[Nayaxa] Gemini overloaded/limited, falling back to DeepSeek...');
+                        responseText = await tryDeepSeek(true);
+                    } else {
+                        throw geminiError;
+                    }
+                }
             }
 
             // 4. Save & Cache Response
@@ -203,7 +214,7 @@ const nayaxaController = {
                     const [keyRows] = await dbNayaxa.query('SELECT api_key FROM gemini_api_keys WHERE is_active = 1 LIMIT 1');
                     const apiKey = keyRows.length > 0 ? keyRows[0].api_key : process.env.GEMINI_API_KEY;
                     const genAI = new GoogleGenerativeAI(apiKey);
-                    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+                    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
                     const result = await model.generateContent(prompt);
                     return result.response.text()?.trim() || '';
                 } catch (e) { return ''; }

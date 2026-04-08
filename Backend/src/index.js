@@ -34,4 +34,12 @@ app.listen(PORT, () => {
     console.log(`🚀 Nayaxa AI Engine Standalone Active!`);
     console.log(`📡 Listening on port: ${PORT}`);
     console.log(`=========================================`);
+
+    // Initialize Nayaxa Mind (Background Intelligence)
+    try {
+        const nayaxaMind = require('./services/nayaxaMindService');
+        nayaxaMind.init(60); // Pulse every 1 hour
+    } catch (e) {
+        console.error('[System] Failed to start Nayaxa Mind:', e);
+    }
 });

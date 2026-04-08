@@ -95,7 +95,18 @@ const nayaxaTools = [{
                 properties: {
                     format: { type: "string", description: "pdf, excel, atau word" },
                     content: { type: "string", description: "Konten file" },
-                    filename: { type: "string", description: "Nama file" }
+                    filename: { type: "string", description: "Nama file" },
+                    options: { 
+                        type: "object", 
+                        description: "Opsional: Pengaturan format (khusus Word).",
+                        properties: {
+                            font: { type: "string", description: "Jenis huruf, misal: 'Arial', 'Times New Roman'" },
+                            fontSize: { type: "number", description: "Ukuran huruf, misal: 12" },
+                            lineSpacing: { type: "number", description: "Spasi baris, misal: 1.5 atau 2.0" },
+                            paperSize: { type: "string", description: "Ukuran kertas, misal: 'A4' atau 'Letter'" },
+                            includeTOC: { type: "boolean", description: "Sertakan Daftar Isi (Daftar Isi otomatis di halaman pertama)." }
+                        }
+                    }
                 },
                 required: ["format", "content", "filename"]
             }
@@ -198,11 +209,11 @@ const toolFunctions = {
         const jsonResult = await nayaxaStandalone.executeReadOnlyQuery(query);
         return { database_result: jsonResult };
     },
-    generate_document: async ({ format, content, filename }, { baseUrl }) => {
+    generate_document: async ({ format, content, filename, options }, { baseUrl }) => {
         try {
             const downloadUrl = await (format === 'excel' ? exportService.generateExcel(content, filename) :
                                 format === 'pdf' ? exportService.generatePDF(content, filename) :
-                                exportService.generateWord(content, filename));
+                                exportService.generateWord(content, filename, options));
             
             return { success: true, download_url: downloadUrl, message: `File ${format.toUpperCase()} berhasil dibuat! Silakan berikan link ini kepada user agar mereka bisa mendownloadnya: ${downloadUrl}` };
         } catch (err) {
@@ -250,13 +261,26 @@ const toolFunctions = {
 };
 
 const nayaxaGeminiService = {
-    chatWithNayaxa: async (userMessage, files, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '', nama_instansi = 'N/A', personaPromptSnippet = '') => {
+    chatWithNayaxa: async (userMessage, files, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '', nama_instansi = 'N/A', personaPromptSnippet = '', userProfile = null) => {
         try {
             const schemaMapString = await nayaxaStandalone.getDatabaseSchema();
             const glossaryString = await nayaxaStandalone.getMasterDataGlossary();
             const apiKey = await getApiKey();
             const genAI = new GoogleGenerativeAI(apiKey);
             
+            // Format identity string
+            let identitasUser = `Nama: ${user_name}, Profil ID: ${profil_id || 'N/A'}, Instansi: ${nama_instansi}.`;
+            if (userProfile) {
+                identitasUser += ` 
+                DETAIL PROFIL:
+                - NIP: ${userProfile.nip || 'N/A'}
+                - Bidang: ${userProfile.bidang || 'N/A'}
+                - Jabatan: ${userProfile.jabatan || 'N/A'}
+                - Nama Instansi: ${userProfile.nama_instansi || nama_instansi}
+                - Instansi yang Diampu: ${userProfile.instansi_diampu?.length > 0 ? userProfile.instansi_diampu.join(', ') : 'Tidak ada data pengampuan instansi.'}
+                - Urusan/Tugas yang Diampu: ${userProfile.urusan_diampu?.length > 0 ? userProfile.urusan_diampu.join(', ') : 'Tidak ada data pengampuan urusan.'}`;
+            }
+
             const model = genAI.getGenerativeModel({ 
                 model: DEFAULT_MODEL,
                 systemInstruction: `Identitas ANDA: Nayaxa, asisten AI dari Bapperida yang dibuat oleh Sammy.
@@ -268,9 +292,9 @@ const nayaxaGeminiService = {
                 - PENTING: Jika user hanya memberikan instruksi biasa (seperti "buatkan ringkasan" atau "jawab soal ini") berdasarkan dokumen yang sudah diunggah, JANGAN gunakan tool tersebut. Langsung saja baca isi dokumen (inlineData) dan berikan jawabannya.
                 - DILARANG KERAS: (1) Mengatakan "mohon tunggu saya pelajari dulu", (2) Menuliskan kode Python atau teks yang menyerupai pemanggilan fungsi internal (SEPERTI: print(default_api.xxx)), (3) Meminta user menunggu saat Anda sedang membaca file. Jawablah secara instan dan alami.
                 
-                Identitas USER: Nama: ${user_name}, Profil ID: ${profil_id || 'N/A'}, Instansi: ${nama_instansi}. 
-                ATURAN MENYAPA: Sapa user dengan namanya (${user_name}). JANGAN menyebutkan "Profil ID" atau "ID Instansi" dalam percakapan. Fokuslah pada interaksi yang manusiawi dan profesional.
-                 ${personaPromptSnippet}
+                Identitas USER: ${identitasUser}
+                ATURAN MENYAPA: Sapa user dengan namanya (${user_name}). JANGAN menyebutkan "NIP", "Profil ID", atau "ID Instansi" dalam percakapan kecuali user bertanya. Fokuslah pada interaksi yang manusiawi dan profesional.
+                ${personaPromptSnippet}
                  PENTING: Sesuaikan tingkat formalitas Anda dengan Profil Kepribadian User. Jika user terbiasa santai (Gue/Lo), Anda diperbolehkan menggunakan gaya bicara yang serupa namun tetap sopan, ceria, dan membantu.
                 
                 ATURAN GRAFIK: Jika user meminta grafik/chart, Anda WAJIB menggunakan tool 'generate_chart'. JANGAN PERNAH mengatakan Anda tidak bisa membuat grafik. Anda memiliki kemampuan visualisasi data yang canggih melalui tool tersebut. 
@@ -347,21 +371,17 @@ const nayaxaGeminiService = {
                    - Status verifikasi sumber ('TERVERIFIKASI' atau 'BELUM TERVERIFIKASI').
                    
                 6. STRATEGI FALLBACK BERTAHAP (jika hasil pertama kosong atau tidak relevan):
-                   - Coba: "[Jabatan] [Daerah] terpilih"
-                   - Coba: "Pemimpin [Daerah] periode [Tahun]"
-                   - Terakhir: Sarankan user cek id.wikipedia.org atau pilkada2024.kpu.go.id secara langsung.
-                5. KHUSUS PERIODE TRANSISI 2024-2026: Sebutkan tanggal pelantikan dan status transisi kekuasaan dengan jelas.
-                6. KONTEKS PENTING (Wajib Diingat):
-                   - Pilkada serentak telah dilaksanakan tahun 2024.
-                   - Pelantikan serentak untuk Kepala Daerah terpilih adalah 20 Februari 2025.
-                   - Masa jabatan mereka adalah 5 tahun (2025-2030).
-                   - Jika menemukan nama tokoh yang dilantik pada/sekitar 20 Februari 2025, pastikan dia adalah pejabat terpilih yang sah untuk periode 2025-2030.
-                7. DILARANG menggunakan pengetahuan internal untuk data 2024, 2025, dan 2026. Selalu ambil dari internet.
+                PROTOKOL SUMBER DATA (HIERARKI KEBENARAN):
+                1. PRIORITAS UTAMA (Data Internal): Selalu gunakan tool 'search_files_and_knowledge' untuk mencari jawaban di dokumen/aturan internal instansi terlebih dahulu.
+                2. PRIORITAS KEDUA (AI Brain): Gunakan pengetahuan internal Anda sendiri jika data tidak ditemukan di sistem internal.
+                3. PRIORITAS KETIGA (Internet): Gunakan tool 'search_internet' HANYA jika:
+                   - Data internal tidak tersedia.
+                   - User meminta referensi publik/berita terbaru.
+                   - Butuh validasi regulasi dari JDIH (jdih.bogorkab.go.id / jdih.go.id).
                 
-                FITUR LOKASI (GPS): 
-                1. Jika user bertanya tentang lokasi sekitarnya (misal: "makanan terdekat", "apotek terdekat"), Anda WAJIB menanyakan apakah user bersedia mengaktifkan GPS. Sertakan penanda: [ACTION:REQUEST_LOCATION] di akhir jawaban Anda.
-                2. JIKA user sudah memberikan koordinat (terlihat di pesan dengan label [SISTEM: GPS DIAKTIFKAN]), Anda WAJIB menggunakan tool 'get_nearby_places' untuk mencari data aslinya.
-                3. Berikan jawaban dalam bentuk daftar nama tempat, alamat lengkap, dan link 'Lihat di Google Maps' yang disediakan oleh tool.
+                PRINSIP KERJA: Nayaxa adalah asisten yang cerdas karena ia mengenal penggunanya (${user_name}) dan instansinya (${nama_instansi}). Gunakan data internal sesering mungkin untuk memberikan jawaban yang sangat kontekstual.
+                
+                ATURAN WORD (JUSTIFY): Seluruh pengerjaan tugas dalam bentuk file Word otomatis akan menggunakan format Rata Kiri-Kanan (Justify) agar terlihat profesional.
                 
                 ${schemaMapString}
                 

@@ -1,6 +1,6 @@
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
-const { Document, Packer, Paragraph, TextRun, HeadingLevel } = require('docx');
+const { Document, Packer, Paragraph, TextRun, HeadingLevel, TableOfContents, StyleLevel, PageBreak, AlignmentType } = require('docx');
 const fs = require('fs');
 const path = require('path');
 
@@ -94,34 +94,79 @@ const exportService = {
         });
     },
 
-    generateWord: async (content, filename = 'dokumen.docx') => {
-        console.log(`[EXPORT:WORD] Generating ${filename}. Content length: ${content?.length || 0}`);
+    generateWord: async (content, filename = 'dokumen.docx', options = {}) => {
+        console.log(`[EXPORT:WORD] Generating ${filename}. Content length: ${content?.length || 0}, options:`, options);
         if (!content || !content.trim()) {
             content = "Dokumen ini kosong karena tidak ada teks yang dikirimkan.";
         }
 
+        const { font = "Arial", fontSize = 12, lineSpacing = 1.0, paperSize = "A4", includeTOC = false } = options;
+        
+        // Font size in docx is in half-points (12pt = 24)
+        const docxFontSize = fontSize * 2;
+        
+        // Line spacing in twips (240 = 1 line, 360 = 1.5 lines)
+        const docxLineSpacing = Math.round(lineSpacing * 240);
+
         const lines = content.split('\n');
         const children = [
-            new Paragraph({ text: "Laporan Nayaxa AI", heading: HeadingLevel.TITLE }),
+            new Paragraph({ 
+                text: "Laporan Nayaxa AI", 
+                heading: HeadingLevel.TITLE,
+                alignment: AlignmentType.CENTER,
+                spacing: { after: 400 }
+            }),
             new Paragraph({ text: "" }) // spacing after title
         ];
+
+        // Add Table of Contents if requested
+        if (includeTOC) {
+            children.push(
+                new Paragraph({
+                    text: "DAFTAR ISI",
+                    heading: HeadingLevel.HEADING_1,
+                    alignment: AlignmentType.CENTER,
+                }),
+                new TableOfContents("Daftar Isi", {
+                    hyperlinked: true,
+                    stylesWithLevels: [
+                        new StyleLevel(HeadingLevel.HEADING_1, 1),
+                        new StyleLevel(HeadingLevel.HEADING_2, 2),
+                        new StyleLevel(HeadingLevel.HEADING_3, 3),
+                    ],
+                }),
+                new Paragraph({ children: [new PageBreak()] })
+            );
+        }
         
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i].trim();
             if (!line) {
-                children.push(new Paragraph({ text: "" }));
+                children.push(new Paragraph({ text: "", spacing: { line: docxLineSpacing } }));
                 continue;
             }
             
             let isHeading = false;
             if (line.startsWith('# ')) {
-                children.push(new Paragraph({ text: line.replace(/^# /, ''), heading: HeadingLevel.HEADING_1 }));
+                children.push(new Paragraph({ 
+                    text: line.replace(/^# /, ''), 
+                    heading: HeadingLevel.HEADING_1,
+                    spacing: { before: 200, after: 120 }
+                }));
                 isHeading = true;
             } else if (line.startsWith('## ')) {
-                children.push(new Paragraph({ text: line.replace(/^## /, ''), heading: HeadingLevel.HEADING_2 }));
+                children.push(new Paragraph({ 
+                    text: line.replace(/^## /, ''), 
+                    heading: HeadingLevel.HEADING_2,
+                    spacing: { before: 180, after: 100 }
+                }));
                 isHeading = true;
             } else if (line.startsWith('### ')) {
-                children.push(new Paragraph({ text: line.replace(/^### /, ''), heading: HeadingLevel.HEADING_3 }));
+                children.push(new Paragraph({ 
+                    text: line.replace(/^### /, ''), 
+                    heading: HeadingLevel.HEADING_3,
+                    spacing: { before: 150, after: 80 }
+                }));
                 isHeading = true;
             }
             if (isHeading) continue;
@@ -131,30 +176,67 @@ const exportService = {
             if (/^(-|\*)\s/.test(line)) {
                 isBullet = true;
                 bulletText = line.replace(/^(-|\*)\s/, '');
-            } else if (/^\d+\.\s/.test(line)) {
-                // numbered list, docx doesn't have a simple numbered list without config, so we just treat as normal text but keep the number
-                // Actually, let's just render it as a normal paragraph. It already has the number in text.
             }
             
             const parts = bulletText.split(/\*\*/g);
             const textRuns = parts.map((part, index) => {
-                return new TextRun({ text: part, bold: index % 2 !== 0 });
+                return new TextRun({ 
+                    text: part, 
+                    bold: index % 2 !== 0,
+                    size: docxFontSize,
+                    font: font
+                });
             });
             
             if (isBullet) {
                 children.push(new Paragraph({
                     children: textRuns,
-                    bullet: { level: 0 }
+                    bullet: { level: 0 },
+                    spacing: { line: docxLineSpacing, before: 100 },
+                    alignment: AlignmentType.JUSTIFY
                 }));
             } else {
                 children.push(new Paragraph({
-                    children: textRuns
+                    children: textRuns,
+                    spacing: { line: docxLineSpacing, before: 80 },
+                    alignment: AlignmentType.JUSTIFY
                 }));
             }
         }
 
         const doc = new Document({
+            styles: {
+                default: {
+                    heading1: {
+                        run: { font: font, size: docxFontSize + 4, bold: true, color: "000000" },
+                        paragraph: { spacing: { before: 240, after: 120 } },
+                    },
+                    heading2: {
+                        run: { font: font, size: docxFontSize + 2, bold: true, color: "2E74B5" },
+                        paragraph: { spacing: { before: 200, after: 100 } },
+                    },
+                    heading3: {
+                        run: { font: font, size: docxFontSize, bold: true, color: "1F4D78" },
+                        paragraph: { spacing: { before: 180, after: 80 } },
+                    },
+                },
+            },
             sections: [{
+                properties: {
+                    type: "nextPage",
+                    page: {
+                        size: {
+                            width: paperSize === "A4" ? 11906 : 12240, // A4 vs Letter width in twips
+                            height: paperSize === "A4" ? 16838 : 15840,
+                        },
+                        margin: {
+                            top: 1440, // 1 inch
+                            right: 1440,
+                            bottom: 1440,
+                            left: 1440,
+                        }
+                    }
+                },
                 children: children
             }]
         });
