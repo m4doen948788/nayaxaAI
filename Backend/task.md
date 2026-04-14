@@ -1,0 +1,4 @@
+- `[ ]` Update `personaService.js` analysis prompt to detect informal language patterns (Gue/Lo)
+- `[ ]` Update `nayaxaDeepSeekService.js` system prompt to mirror the user's formality level
+- `[ ]` Update `nayaxaGeminiService.js` system prompt to mirror the user's formality level
+- `[ ]` Confirm that no other code is affected

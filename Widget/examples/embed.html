@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nayaxa Embed Example</title>
+    <!-- In real scenario, include the CSS build -->
+    <link rel="stylesheet" href="../dist/style.css">
+</head>
+<body style="background: #f1f5f9; font-family: sans-serif;">
+    <div style="padding: 40px; text-align: center;">
+        <h1>Aplikasi Anda (Misal: Web Puskesmas)</h1>
+        <p>Nayaxa Widget akan muncul di pojok kanan bawah.</p>
+    </div>
+
+    <!-- The Container -->
+    <div id="nayaxa-root"></div>
+
+    <!-- The Bundle -->
+    <script type="module">
+        // Import the mount function from the build
+        // For local development testing:
+        import { mountNayaxa } from '../src/main.tsx';
+
+        mountNayaxa(document.getElementById('nayaxa-root'), {
+            baseUrl: 'http://localhost:6001/api/nayaxa',
+            apiKey: 'NAYAXA-BAPPERIDA-XXXXXXXXXXXXXXXX',
+            user: {
+                id: 999,
+                nama: 'Admin Puskesmas',
+                instansi_id: 123
+            },
+            title: 'Nayaxa Health',
+            subtitle: 'Asisten Puskesmas'
+        });
+    </script>
+</body>
+</html>
