@@ -1,0 +1,30 @@
+{
+  "name": "nayaxa-widget",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.6.7",
+    "html-to-image": "^1.11.13",
+    "lucide-react": "^0.344.0",
+    "mermaid": "^11.14.0",
+    "motion": "^11.0.8",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.55",
+    "@types/react-dom": "^18.2.19",
+    "@vitejs/plugin-react": "^4.2.1",
+    "typescript": "^5.2.2",
+    "vite": "^5.1.0"
+  }
+}
