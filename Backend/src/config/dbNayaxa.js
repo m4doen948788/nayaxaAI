@@ -7,9 +7,12 @@ const pool = mysql.createPool({
     password: process.env.NAYAXA_DB_PASSWORD,
     database: process.env.NAYAXA_DB_NAME,
     waitForConnections: true,
-    connectionLimit: 10,
+    connectionLimit: 50, // Increased for high concurrency (indexing + chat)
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 10000,
     dateStrings: true,
 });
+
 
 pool.on('error', (err) => {
     console.error('[MySQL Pool Error] dbNayaxa:', err.message);

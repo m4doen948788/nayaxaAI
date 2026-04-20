@@ -1,6 +1,6 @@
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
-const { Document, Packer, Paragraph, TextRun, HeadingLevel, TableOfContents, StyleLevel, PageBreak, AlignmentType } = require('docx');
+const { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, TableOfContents, StyleLevel, PageBreak, AlignmentType, WidthType, BorderStyle, ShadingType, VerticalAlign } = require('docx');
 const fs = require('fs');
 const path = require('path');
 
@@ -9,6 +9,37 @@ const EXPORT_DIR = path.join(__dirname, '../../uploads/exports');
 if (!fs.existsSync(EXPORT_DIR)) {
     fs.mkdirSync(EXPORT_DIR, { recursive: true });
 }
+
+/**
+ * Robust text sanitization to remove Markdown and HTML artifacts from documents
+ */
+const sanitizeText = (text) => {
+    if (!text || typeof text !== 'string') return text;
+    return text
+        .replace(/<br\s*\/?>/gi, '\n') // Convert <br> to real newlines
+        .replace(/<[^>]*>/g, '') // Strip remaining HTML tags
+        .replace(/\*\*/g, '') // Strip bold asterisks (Word handles bolding separately)
+        .replace(/^\s*[-*]\s+/gm, '') // Strip bullet points at start of lines (Word/PDF adds their own)
+        .replace(/^[#\s]+|(?<=\n)[#\s]+/g, '') // Strip header hashes
+        .replace(/[`_~]/g, '') // Strip other common MD markers
+        .trim();
+};
+
+/**
+ * Recursively clean all string values in an object/array
+ */
+const recursiveDataCleaner = (data) => {
+    if (typeof data === 'string') return sanitizeText(data);
+    if (Array.isArray(data)) return data.map(recursiveDataCleaner);
+    if (data !== null && typeof data === 'object') {
+        const cleaned = {};
+        for (const key in data) {
+            cleaned[key] = recursiveDataCleaner(data[key]);
+        }
+        return cleaned;
+    }
+    return data;
+};
 
 const exportService = {
     generateExcel: async (data, filename = 'export.xlsx') => {
@@ -27,9 +58,10 @@ const exportService = {
         }
         
         if (Array.isArray(data) && data.length > 0) {
-            const columns = Object.keys(data[0]).map(key => ({ header: key.toUpperCase(), key, width: 20 }));
+            const cleanedData = recursiveDataCleaner(data);
+            const columns = Object.keys(cleanedData[0]).map(key => ({ header: key.toUpperCase(), key, width: 20 }));
             worksheet.columns = columns;
-            worksheet.addRows(data);
+            worksheet.addRows(cleanedData);
         }
         const safe = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
         const p = path.join(EXPORT_DIR, safe);
@@ -59,16 +91,8 @@ const exportService = {
 
             doc.pipe(s);
             
-            // Header
-            doc.fontSize(20).fillColor('#4f46e5').text('NAYAXA AI - STRATEGY REPORT', { align: 'center' });
-            doc.fontSize(10).fillColor('#64748b').text(`Dibuat pada: ${new Date().toLocaleString('id-ID')}`, { align: 'center' });
-            doc.moveDown(2);
-            
             // Content
-            const cleanContent = String(content || '')
-                .replace(/\*\*/g, '') // Remove bold asterisks
-                .replace(/^#+\s/gm, '') // Remove header hashes at start of line
-                .replace(/\n#+\s/g, '\n'); // Remove header hashes after newline
+            const cleanContent = sanitizeText(content);
             
             doc.fontSize(12).fillColor('#1e293b').text(cleanContent, {
                 align: 'justify',
@@ -108,16 +132,10 @@ const exportService = {
         // Line spacing in twips (240 = 1 line, 360 = 1.5 lines)
         const docxLineSpacing = Math.round(lineSpacing * 240);
 
+        let listCounter = 0;
+        let inNumberedList = false;
         const lines = content.split('\n');
-        const children = [
-            new Paragraph({ 
-                text: "Laporan Nayaxa AI", 
-                heading: HeadingLevel.TITLE,
-                alignment: AlignmentType.CENTER,
-                spacing: { after: 400 }
-            }),
-            new Paragraph({ text: "" }) // spacing after title
-        ];
+        const children = []; // Removed hardcoded branding title
 
         // Add Table of Contents if requested
         if (includeTOC) {
@@ -139,6 +157,19 @@ const exportService = {
             );
         }
         
+        const processTextRuns = (text, isHeader = false, customSize = docxFontSize) => {
+            const parts = text.split(/\*\*/g);
+            return parts.map((part, index) => {
+                return new TextRun({ 
+                    text: sanitizeText(part), 
+                    bold: (index % 2 !== 0) || isHeader,
+                    size: customSize,
+                    font: font,
+                    color: isHeader ? "FFFFFF" : "334155"
+                });
+            });
+        };
+
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i].trim();
             if (!line) {
@@ -146,78 +177,175 @@ const exportService = {
                 continue;
             }
             
-            let isHeading = false;
+            // 1. Smart Heading Detection (Numbers like 1. TITLE or # TITLE)
+            let currentHeadingLevel = null;
+            let cleanHeadingText = line;
+
             if (line.startsWith('# ')) {
-                children.push(new Paragraph({ 
-                    text: line.replace(/^# /, ''), 
-                    heading: HeadingLevel.HEADING_1,
-                    spacing: { before: 200, after: 120 }
-                }));
-                isHeading = true;
+                currentHeadingLevel = HeadingLevel.HEADING_1;
+                cleanHeadingText = line.replace(/^# /, '');
             } else if (line.startsWith('## ')) {
-                children.push(new Paragraph({ 
-                    text: line.replace(/^## /, ''), 
-                    heading: HeadingLevel.HEADING_2,
-                    spacing: { before: 180, after: 100 }
-                }));
-                isHeading = true;
+                currentHeadingLevel = HeadingLevel.HEADING_2;
+                cleanHeadingText = line.replace(/^## /, '');
             } else if (line.startsWith('### ')) {
+                currentHeadingLevel = HeadingLevel.HEADING_3;
+                cleanHeadingText = line.replace(/^### /, '');
+            } else if (/^[0-9]+\.\s+[A-Z\s]+$/.test(line)) { 
+                // Matches "1. DATA PENYEBAB" (Numbered + ALL CAPS)
+                currentHeadingLevel = HeadingLevel.HEADING_1;
+            } else if (/^[A-Z]\.\s+[A-Z\s]+$/.test(line)) {
+                // Matches "A. PENDAHULUAN"
+                currentHeadingLevel = HeadingLevel.HEADING_2;
+            }
+
+            if (currentHeadingLevel) {
+                inNumberedList = false; // Reset list context on heading
                 children.push(new Paragraph({ 
-                    text: line.replace(/^### /, ''), 
-                    heading: HeadingLevel.HEADING_3,
-                    spacing: { before: 150, after: 80 }
+                    text: sanitizeText(cleanHeadingText), 
+                    heading: currentHeadingLevel,
+                    spacing: { before: 240, after: 120 }
                 }));
-                isHeading = true;
+                continue;
             }
-            if (isHeading) continue;
-            
+
+            // 2. Markdown Table Detection
+            if (line.startsWith('|') && lines[i+1]?.trim().startsWith('|') && lines[i+1]?.includes('---')) {
+                const tableRows = [];
+                let j = i;
+                
+                while (j < lines.length && lines[j].trim().startsWith('|')) {
+                    const rowText = lines[j].trim();
+                    if (!rowText.includes('---')) {
+                        const cells = rowText.split('|').filter((_, idx, arr) => idx > 0 && idx < arr.length - 1);
+                        const isHeader = tableRows.length === 0;
+                        
+                        tableRows.push(new TableRow({
+                            children: cells.map(cell => new TableCell({
+                                children: [new Paragraph({ 
+                                    children: processTextRuns(cell.trim(), isHeader, isHeader ? docxFontSize : docxFontSize - 2),
+                                    alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
+                                    spacing: { before: 40, after: 40 }
+                                })],
+                                shading: isHeader ? { fill: "4f46e5", type: ShadingType.CLEAR } : undefined,
+                                verticalAlign: VerticalAlign.CENTER,
+                                margins: { top: 120, bottom: 120, left: 120, right: 120 },
+                                borders: {
+                                    top: { style: BorderStyle.SINGLE, size: 1, color: "CBD5E1" },
+                                    bottom: { style: BorderStyle.SINGLE, size: 1, color: "CBD5E1" },
+                                    left: { style: BorderStyle.SINGLE, size: 1, color: "CBD5E1" },
+                                    right: { style: BorderStyle.SINGLE, size: 1, color: "CBD5E1" },
+                                }
+                            })),
+                            tableHeader: isHeader
+                        }));
+                    }
+                    j++;
+                }
+                
+                children.push(new Table({
+                    rows: tableRows,
+                    width: { size: 100, type: WidthType.PERCENTAGE },
+                    borders: {
+                        top: { style: BorderStyle.SINGLE, size: 2, color: "4f46e5" },
+                        bottom: { style: BorderStyle.SINGLE, size: 2, color: "4f46e5" },
+                        left: { style: BorderStyle.SINGLE, size: 1, color: "E2E8F0" },
+                        right: { style: BorderStyle.SINGLE, size: 1, color: "E2E8F0" },
+                        insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: "E2E8F0" },
+                        insideVertical: { style: BorderStyle.SINGLE, size: 1, color: "E2E8F0" },
+                    },
+                    spacing: { before: 300, after: 300 }
+                }));
+                
+                inNumberedList = false; // Reset list context on table
+                i = j - 1;
+                continue;
+            }
+
+            // 3. List Item Detection (Bulleted or Numbered)
             let isBullet = false;
-            let bulletText = line;
-            if (/^(-|\*)\s/.test(line)) {
+            let isNumbered = false;
+            let listItemText = line;
+            
+            if (/^[-*]\s/.test(line)) {
                 isBullet = true;
-                bulletText = line.replace(/^(-|\*)\s/, '');
+                listItemText = line.replace(/^[-*]\s/, '');
+            } else if (/^[0-9]+\.\s/.test(line)) {
+                isNumbered = true;
+                listItemText = line.replace(/^[0-9]+\.\s/, '');
             }
             
-            const parts = bulletText.split(/\*\*/g);
-            const textRuns = parts.map((part, index) => {
-                return new TextRun({ 
-                    text: part, 
-                    bold: index % 2 !== 0,
-                    size: docxFontSize,
-                    font: font
-                });
-            });
+            const textRuns = processTextRuns(listItemText);
             
-            if (isBullet) {
+            if (isBullet || isNumbered) {
+                if (isNumbered && !inNumberedList) {
+                    listCounter++;
+                    inNumberedList = true;
+                } else if (!isNumbered) {
+                    inNumberedList = false;
+                }
+
                 children.push(new Paragraph({
                     children: textRuns,
-                    bullet: { level: 0 },
+                    bullet: isBullet ? { level: 0 } : undefined,
+                    numbering: isNumbered ? { reference: `numbered-list-${listCounter}`, level: 0 } : undefined,
                     spacing: { line: docxLineSpacing, before: 100 },
-                    alignment: AlignmentType.JUSTIFY
+                    alignment: AlignmentType.JUSTIFIED
                 }));
             } else {
+                inNumberedList = false; // Reset on plain text
                 children.push(new Paragraph({
                     children: textRuns,
                     spacing: { line: docxLineSpacing, before: 80 },
-                    alignment: AlignmentType.JUSTIFY
+                    alignment: AlignmentType.JUSTIFIED
                 }));
             }
         }
 
         const doc = new Document({
+            numbering: {
+                config: Array.from({ length: listCounter }, (_, idx) => ({
+                    reference: `numbered-list-${idx + 1}`,
+                    levels: [
+                        {
+                            level: 0,
+                            format: "decimal",
+                            text: "%1.",
+                            alignment: AlignmentType.START,
+                            style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+                        },
+                    ],
+                })),
+            },
             styles: {
                 default: {
+                    document: {
+                        run: { font: font, size: docxFontSize, color: "334155" },
+                        paragraph: { 
+                            alignment: AlignmentType.JUSTIFIED,
+                            spacing: { line: docxLineSpacing, before: 120, after: 120 }
+                        },
+                    },
                     heading1: {
-                        run: { font: font, size: docxFontSize + 4, bold: true, color: "000000" },
-                        paragraph: { spacing: { before: 240, after: 120 } },
+                        run: { font: font, size: docxFontSize + 8, bold: true, color: "1E293B" },
+                        paragraph: { 
+                            alignment: AlignmentType.LEFT, 
+                            spacing: { before: 400, after: 200 }, 
+                            border: { bottom: { color: "E2E8F0", space: 4, style: BorderStyle.SINGLE, size: 6 } } 
+                        },
                     },
                     heading2: {
-                        run: { font: font, size: docxFontSize + 2, bold: true, color: "2E74B5" },
-                        paragraph: { spacing: { before: 200, after: 100 } },
+                        run: { font: font, size: docxFontSize + 4, bold: true, color: "4F46E5" },
+                        paragraph: { 
+                            alignment: AlignmentType.LEFT,
+                            spacing: { before: 300, after: 150 } 
+                        },
                     },
                     heading3: {
-                        run: { font: font, size: docxFontSize, bold: true, color: "1F4D78" },
-                        paragraph: { spacing: { before: 180, after: 80 } },
+                        run: { font: font, size: docxFontSize + 2, bold: true, color: "334155" },
+                        paragraph: { 
+                            alignment: AlignmentType.LEFT,
+                            spacing: { before: 200, after: 100 } 
+                        },
                     },
                 },
             },
@@ -226,11 +354,11 @@ const exportService = {
                     type: "nextPage",
                     page: {
                         size: {
-                            width: paperSize === "A4" ? 11906 : 12240, // A4 vs Letter width in twips
+                            width: paperSize === "A4" ? 11906 : 12240,
                             height: paperSize === "A4" ? 16838 : 15840,
                         },
                         margin: {
-                            top: 1440, // 1 inch
+                            top: 1440,
                             right: 1440,
                             bottom: 1440,
                             left: 1440,
@@ -290,7 +418,8 @@ const exportService = {
                 }
 
                 // 2. Process each item in filledData
-                filledData.forEach(item => {
+                const cleanedFilledData = recursiveDataCleaner(filledData);
+                cleanedFilledData.forEach(item => {
                     let found = false;
                     const itemKeys = Object.keys(item);
                     const lookupKey = itemKeys.find(k => k.toLowerCase() === 'uraian' || k.toLowerCase() === 'label' || k.toLowerCase() === 'item');

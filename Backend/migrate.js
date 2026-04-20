@@ -139,6 +139,19 @@ async function migrate() {
         } catch (colErr) { console.error('Error ensuring nayaxa_knowledge columns:', colErr); }
 
         console.log(`[5] Table nayaxa_knowledge is ready.`);
+        
+        // 5b. Create Code Proposals Table
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS nayaxa_code_proposals (
+                id VARCHAR(50) PRIMARY KEY,
+                session_id VARCHAR(50) NOT NULL,
+                files JSON NOT NULL,
+                status ENUM('pending', 'accepted', 'rejected') DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX (session_id)
+            )
+        `);
+        console.log(`[5b] Table nayaxa_code_proposals created.`);
 
         // 6. Migrate Data from Dashboard DB (If tables exist there)
         console.log(`[6] Checking for legacy data in ${DASHBOARD_DB}...`);

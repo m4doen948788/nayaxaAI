@@ -16,7 +16,7 @@ app.get('/health', (req, res) => {
     res.json({ 
         status: 'OK', 
         service: 'Nayaxa Standalone Engine',
-        version: '1.0.0',
+        version: '4.3.0',
         timestamp: new Date().toISOString()
     });
 });
@@ -29,7 +29,7 @@ app.use('/api/nayaxa', nayaxaRoutes);
 const path = require('path');
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`=========================================`);
     console.log(`🚀 Nayaxa AI Engine Standalone Active!`);
     console.log(`📡 Listening on port: ${PORT}`);
@@ -43,3 +43,8 @@ app.listen(PORT, () => {
         console.error('[System] Failed to start Nayaxa Mind:', e);
     }
 });
+
+// Set server timeouts to 5 minutes to accommodate large AI document generations
+server.timeout = 300000;
+server.keepAliveTimeout = 300000;
+server.headersTimeout = 305000;

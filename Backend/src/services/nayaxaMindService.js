@@ -56,7 +56,7 @@ const nayaxaMindService = {
                 try {
                     if (ext === '.docx' || ext === '.doc') {
                         const buffer = fs.readFileSync(absolutePath);
-                        const result = await mammoth.extractRawText({ buffer });
+                        const result = await mammoth.convertToHtml({ buffer });
                         textContent = result.value;
                     } else if (ext === '.xlsx' || ext === '.xls' || ext === '.csv') {
                         const workbook = XLSX.readFile(absolutePath);
@@ -162,29 +162,47 @@ const nayaxaMindService = {
             const month = now.getMonth() + 1;
             const year = now.getFullYear();
 
-            // Fetch basic stats across system
-            const [stats, forecast, alerts] = await Promise.all([
+            // 1. Fetch System-Wide Stats (All Agencies)
+            const [sysStats, sysForecast, sysAlerts] = await Promise.all([
                 nayaxaStandalone.getPegawaiStatistics(null, month, year),
                 nayaxaStandalone.forecastTrends(null, month, year),
                 nayaxaStandalone.detectAnomalies(null)
+            ]);
+
+            // 2. Fetch Bapperida Specific Stats (Main Agency)
+            const [bapStats, bapForecast, bapAlerts] = await Promise.all([
+                nayaxaStandalone.getPegawaiStatistics(2, month, year),
+                nayaxaStandalone.forecastTrends(2, month, year),
+                nayaxaStandalone.detectAnomalies(2)
             ]);
 
             const apiKey = await getApiKey();
             const genAI = new GoogleGenerativeAI(apiKey);
             const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
-            const dataToAnalyze = JSON.stringify({ stats, forecast, alerts });
-            const prompt = `Analisis data statistik sistem Bapperida ini (Bulan ${month} Tahun ${year}). 
-            Berikan narasi ringkas tentang tren keaktifan pegawai, anomali yang ditemukan, dan wawasan penting lainnya untuk diingat oleh Nayaxa. 
-            Data: ${dataToAnalyze}`;
+            // Analyze System-Wide
+            const sysPrompt = `Analisis data statistik SELURUH SISTEM OPD/Instansi (Bulan ${month} Tahun ${year}). 
+            Data ini mencakup total keseluruhan pegawai di database. 
+            Berikan narasi ringkas tentang tren keaktifan total, anomali sistemik, dan wawasan global. 
+            Data: ${JSON.stringify({ stats: sysStats, forecast: sysForecast, alerts: sysAlerts })}`;
+            const sysResult = await model.generateContent(sysPrompt);
+            const sysInsight = sysResult.response.text();
 
-            const result = await model.generateContent(prompt);
-            const insightText = result.response.text();
+            // Analyze Bapperida Specific
+            const bapPrompt = `Analisis data statistik khusus instansi BAPPERIDA (Bulan ${month} Tahun ${year}). 
+            Data ini HANYA mencakup pegawai yang terdaftar di Bapperida. 
+            Berikan narasi ringkas tentang keaktifan internal Bapperida, ranking bidang, dan anomali internal. 
+            Data: ${JSON.stringify({ stats: bapStats, forecast: bapForecast, alerts: bapAlerts })}`;
+            const bapResult = await model.generateContent(bapPrompt);
+            const bapInsight = bapResult.response.text();
 
-            // Save to Knowledge Base
-            await knowledgeTool.ingestToKnowledge(1, 'System Snapshot', insightText, `Snapshot-${month}-${year}`);
+            // Save to Knowledge Base with clear categorization
+            await Promise.all([
+                knowledgeTool.ingestToKnowledge(1, 'System Snapshot - Global', sysInsight, `Global-Snapshot-${month}-${year}`),
+                knowledgeTool.ingestToKnowledge(1, 'System Snapshot - Bapperida', bapInsight, `Bapperida-Snapshot-${month}-${year}`)
+            ]);
             
-            await nayaxaMindService.finishLog(logId, 'SUCCESS', `System snapshot complete. [Sig: ${dbStatus.signature}]`);
+            await nayaxaMindService.finishLog(logId, 'SUCCESS', `System and Bapperida snapshots complete. [Sig: ${dbStatus.signature}]`);
         } catch (error) {
             console.error('[Mind] Critical Snapshot Error:', error);
             await nayaxaMindService.finishLog(logId, 'FAILED', error.message);

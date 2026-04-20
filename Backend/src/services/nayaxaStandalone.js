@@ -1,4 +1,5 @@
 const pool = require('../config/dbDashboard');
+const dbNayaxa = require('../config/dbNayaxa');
 const axios = require('axios');
 
 /**
@@ -49,11 +50,23 @@ const nayaxaStandalone = {
         try {
             const params = instansi_id ? [instansi_id] : [];
             const filterClauseEmpty = applyInstansiFilter('', instansi_id);
-            const [pegawai] = await pool.query(
-                `SELECT COUNT(id) as total_pegawai FROM profil_pegawai WHERE ${filterClauseEmpty} AND is_active = 1`,
+            const filterClauseP = applyInstansiFilter('p', instansi_id);
+
+            // 1. Total Employees in the agency (The '89' figure)
+            const [totalPegawaiRows] = await pool.query(
+                `SELECT COUNT(id) as count FROM profil_pegawai WHERE ${filterClauseEmpty}`,
                 params
             );
+            const totalPegawaiCount = totalPegawaiRows[0].count;
 
+            // 2. Active Employees (is_active = 1)
+            const [activePegawaiRows] = await pool.query(
+                `SELECT COUNT(id) as count FROM profil_pegawai WHERE ${filterClauseEmpty} AND is_active = 1`,
+                params
+            );
+            const activePegawaiCount = activePegawaiRows[0].count;
+
+            // 3. Activity Breakdown
             const [activities] = await pool.query(`
                 SELECT tipe_kegiatan, SUM(total_kegiatan_per_pegawai) as total_kegiatan
                 FROM (
@@ -66,28 +79,28 @@ const nayaxaStandalone = {
                         END as total_kegiatan_per_pegawai
                     FROM kegiatan_harian_pegawai k
                     JOIN profil_pegawai p ON k.profil_pegawai_id = p.id
-                    WHERE ${instansi_id ? 'p.instansi_id = ?' : '1=1'} AND MONTH(k.tanggal) = ? AND YEAR(k.tanggal) = ?
+                    WHERE ${filterClauseP} AND MONTH(k.tanggal) = ? AND YEAR(k.tanggal) = ?
                     GROUP BY profil_pegawai_id, tipe_kegiatan
                 ) as sub
                 GROUP BY tipe_kegiatan
                 ORDER BY total_kegiatan DESC
-            `, instansi_id ? [instansi_id, month, year] : [month, year]);
+            `, [...params, month, year]);
 
-            const filterClauseP = applyInstansiFilter('p', instansi_id);
-            const [activePegawai] = await pool.query(`
-                SELECT COUNT(DISTINCT k.profil_pegawai_id) as active_count
+            // 4. Monthly Reporting Count (How many people actually filed reports this month)
+            const [monthlyReportingRows] = await pool.query(`
+                SELECT COUNT(DISTINCT k.profil_pegawai_id) as count
                 FROM kegiatan_harian_pegawai k
                 JOIN profil_pegawai p ON k.profil_pegawai_id = p.id
                 WHERE ${filterClauseP} AND MONTH(k.tanggal) = ? AND YEAR(k.tanggal) = ?
             `, [...params, month, year]);
+            const monthlyReportingCount = monthlyReportingRows[0].count;
 
-            const totalPegawai = pegawai[0].total_pegawai || 0;
-            const activeCount = activePegawai[0].active_count || 0;
-            const fillRate = totalPegawai > 0 ? ((activeCount / totalPegawai) * 100).toFixed(2) : 0;
+            const fillRate = totalPegawaiCount > 0 ? ((monthlyReportingCount / totalPegawaiCount) * 100).toFixed(2) : 0;
 
             return {
-                total_pegawai: totalPegawai,
-                active_pegawai: activeCount,
+                total_pegawai: totalPegawaiCount,
+                active_pegawai: activePegawaiCount, // Status based active
+                reporting_pegawai: monthlyReportingCount, // Activity based active
                 fill_rate_percentage: parseFloat(fillRate),
                 activity_breakdown: activities
             };
@@ -293,43 +306,171 @@ const nayaxaStandalone = {
         } catch (error) { return { error: error.message }; }
     },
 
+    executeSystemQuery: async (q) => {
+        try {
+            const up = q.trim().toUpperCase();
+            // Allow SELECT, UPDATE, DELETE, INSERT, ALTER, DROP, CREATE, TRUNCATE, DESCRIBE, SHOW
+            const [rows] = await pool.query(q);
+            return {
+                message: "Query berhasil dieksekusi",
+                affectedRows: rows.affectedRows || 0,
+                result: up.startsWith('SELECT') || up.startsWith('SHOW') || up.startsWith('DESCRIBE') ? rows : []
+            };
+        } catch (error) { 
+            console.error('[Nayaxa_DB_Update_Error]', error);
+            return { error: error.message }; 
+        }
+    },
+
+    /**
+     * Get the absolute latest activity of a user across all major tables.
+     * Used for contextual greetings.
+     */
+    getLastUserActivity: async (profil_id, user_id) => {
+        try {
+            if (!profil_id && !user_id) return null;
+
+            // Define queries for different activity types
+            const queries = [
+                // 1. Logbook entries
+                {
+                    query: `SELECT 'Menambah kegiatan harian' as aksi, nama_kegiatan as objek, created_at as ts 
+                            FROM kegiatan_harian_pegawai WHERE profil_pegawai_id = ? ORDER BY created_at DESC LIMIT 1`,
+                    params: [profil_id]
+                },
+                // 2. Logbook updates (Edit History)
+                {
+                    query: `SELECT aksi, keterangan as objek, created_at as ts 
+                            FROM kegiatan_edit_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`,
+                    params: [user_id]
+                },
+                // 3. Document/File uploads
+                {
+                    query: `SELECT 'Mengunggah file' as aksi, nama_file as objek, uploaded_at as ts 
+                            FROM dokumen_upload WHERE uploaded_by = ? AND is_deleted = 0 ORDER BY uploaded_at DESC LIMIT 1`,
+                    params: [user_id]
+                },
+                // 4. Document updates (Edit History)
+                {
+                    query: `SELECT aksi, keterangan as objek, created_at as ts 
+                            FROM dokumen_edit_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`,
+                    params: [user_id]
+                },
+                // 5. Managed Activities (Management)
+                {
+                    query: `SELECT 'Menyiapkan kegiatan' as aksi, nama_kegiatan as objek, created_at as ts 
+                            FROM kegiatan_manajemen WHERE created_by = ? AND is_deleted = 0 ORDER BY created_at DESC LIMIT 1`,
+                    params: [user_id]
+                }
+            ];
+
+            const results = await Promise.all(queries.map(q => pool.query(q.query, q.params).catch(() => [[]])));
+            
+            const activities = results
+                .map(r => r[0] && r[0][0] ? r[0][0] : null)
+                .filter(a => a && a.ts)
+                .sort((a, b) => new Date(b.ts) - new Date(a.ts));
+
+            if (activities.length === 0) return null;
+
+            const latest = activities[0];
+            const timeAgo = Math.floor((new Date() - new Date(latest.ts)) / 60000); // in minutes
+            
+            // Only return if it happened in the last 24 hours (to keep it relevant)
+            if (timeAgo > 1440) return null;
+
+            let timeStr = timeAgo < 1 ? 'baru saja' : `${timeAgo} menit yang lalu`;
+            if (timeAgo >= 60) timeStr = `${Math.floor(timeAgo / 60)} jam yang lalu`;
+
+            return {
+                description: `${latest.aksi} '${latest.objek}'`,
+                time_ago: timeStr,
+                timestamp: latest.ts
+            };
+        } catch (error) {
+            console.error('Error in getLastUserActivity:', error);
+            return null;
+        }
+    },
+
     searchLibrary: async (query) => {
         try {
-            // 1. Search Files (dbDashboard)
+            // Normalize query for acronyms
+            let expandedQuery = query.toLowerCase();
+            let isKLA = false;
+            if (expandedQuery.includes('kabupaten layak anak') || expandedQuery.includes('kota layak anak') || expandedQuery.includes('kla')) {
+                expandedQuery += ' kla layak anak';
+                isKLA = true;
+            }
+
+            const searchTerms = expandedQuery.split(' ').filter(t => t.length > 1);
+            if (searchTerms.length === 0) return [];
+
+            // 1. Search Files & Thematic Mapping (dbDashboard)
+            const fileConditions = searchTerms.map(() => '(du.nama_file LIKE ? OR du.path LIKE ?)').join(' OR ');
+            const fileParams = searchTerms.flatMap(t => [`%${t}%`, `%${t}%`]);
+
+            // Add thematic search if KLA detected or general search
+            let thematicIds = [];
+            if (isKLA) {
+                const [tRows] = await pool.query("SELECT id FROM master_tematik WHERE (nama LIKE '%KLA%' OR nama LIKE '%Layak Anak%')");
+                thematicIds = tRows.map(r => r.id);
+            }
+
+            const thematicClause = thematicIds.length > 0 ? `OR dt.tematik_id IN (${thematicIds.join(',')})` : '';
+
             const [fileRows] = await pool.query(`
-                SELECT id, nama_file, path, ukuran, uploaded_at 
-                FROM dokumen_upload 
-                WHERE (nama_file LIKE ? OR path LIKE ?) AND is_deleted = 0
-                LIMIT 5
-            `, [`%${query}%`, `%${query}%`]);
+                SELECT DISTINCT du.id, du.nama_file, du.path, du.ukuran, du.uploaded_at, mt.nama as tematik
+                FROM dokumen_upload du
+                LEFT JOIN dokumen_tematik dt ON du.id = dt.dokumen_id
+                LEFT JOIN master_tematik mt ON dt.tematik_id = mt.id
+                WHERE du.is_deleted = 0
+                AND (${fileConditions} ${thematicClause})
+                LIMIT 10
+            `, fileParams);
             
             const files = fileRows.map(r => ({
                 id: r.id,
                 type: 'FILE',
                 title: r.nama_file,
                 url: r.path,
-                details: `Ukuran: ${(r.ukuran / 1024 / 1024).toFixed(2)} MB, Uploaded: ${new Date(r.uploaded_at).toLocaleDateString('id-ID')}`
+                category: r.tematik || 'Umum',
+                details: `Kategori: ${r.tematik || 'Umum'}, Ukuran: ${(r.ukuran / 1024 / 1024).toFixed(2)} MB, Uploaded: ${new Date(r.uploaded_at).toLocaleDateString('id-ID')}`
             }));
 
-            // 2. Search Knowledge (dbNayaxa)
-            const [knowledgeRows] = await dbNayaxa.query(`
-                SELECT id, category, content, source_file, created_at
-                FROM nayaxa_knowledge
-                WHERE (category LIKE ? OR content LIKE ? OR source_file LIKE ?)
-                AND is_active = 1
-                LIMIT 3
-            `, [`%${query}%`, `%${query}%`, `%${query}%`]);
+            // 2. Search Knowledge (dbNayaxa) - Knowledge base specific entries
+            const knowledgeConditions = searchTerms.map(() => '(category LIKE ? OR content LIKE ? OR source_file LIKE ?)').join(' OR ');
+            const knowledgeParams = searchTerms.flatMap(t => [`%${t}%`, `%${t}%`, `%${t}%`]);
+
+            let knowledgeRows = [];
+            try {
+                [knowledgeRows] = await dbNayaxa.query(`
+                    SELECT id, category, content, source_file, created_at
+                    FROM nayaxa_knowledge
+                    WHERE (${knowledgeConditions})
+                    AND is_active = 1
+                    LIMIT 5
+                `, knowledgeParams);
+            } catch (knErr) {
+                console.error('Knowledge Search secondary error:', knErr.message);
+            }
 
             const knowledge = knowledgeRows.map(r => ({
                 id: r.id,
                 type: 'KNOWLEDGE',
                 title: r.source_file || r.category || 'Materi Belajar',
                 content_preview: r.content.substring(0, 500) + '...',
+                category: r.category || 'Knowledge',
                 details: `Kategori: ${r.category || 'Umum'}, Tanggal: ${new Date(r.created_at).toLocaleDateString('id-ID')}`
             }));
 
+            // Merge and prioritize by relevance (files first if KLA)
             return [...files, ...knowledge];
-        } catch (error) { throw error; }
+        } catch (error) { 
+            console.error('Search Library Critical Error:', error);
+            // Return empty instead of throwing to prevent white screen
+            return []; 
+        }
     },
 
     getNearbyPlaces: async (lat, lng, query) => {
@@ -646,12 +787,39 @@ const nayaxaStandalone = {
             }
             finalResults.sort((a, b) => b.totalScore - a.totalScore);
 
+            const validateLink = async (result) => {
+                try {
+                    // Fast HEAD check for 404s
+                    const res = await axios.head(result.link, { 
+                        headers: commonHeaders, 
+                        timeout: 3000, 
+                        maxRedirects: 3,
+                        validateStatus: (status) => status < 400 || status === 403 // Discard 404+
+                    });
+                    return result;
+                } catch (err) {
+                    if (err.response?.status === 404) {
+                        console.warn(`[Nayaxa] Filtering Dead Link (404): ${result.link}`);
+                        return null;
+                    }
+                    // For other errors (timeout, 403, 500, etc.), we keep it as fallback 
+                    // unless it's a confirmed 404
+                    return result;
+                }
+            };
+
+            const candidateResults = finalResults.slice(0, 10);
+            const validatedResults = await Promise.allSettled(candidateResults.map(r => validateLink(r)));
+            const activeResults = validatedResults
+                .filter(res => res.status === 'fulfilled' && res.value !== null)
+                .map(res => res.value);
+
             const searchDate = new Date().toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-            return finalResults.length > 0 ? {
+            return activeResults.length > 0 ? {
                 success: true,
                 query,
                 search_date: searchDate,
-                results: finalResults.slice(0, 6).map(r => ({ ...r, trust_level: r.totalScore > 100 ? 'TERVERIFIKASI' : 'BELUM TERVERIFIKASI' })),
+                results: activeResults.slice(0, 6).map(r => ({ ...r, trust_level: r.totalScore > 100 ? 'TERVERIFIKASI' : 'BELUM TERVERIFIKASI' })),
                 search_engine_used: isBlocked ? 'API Waterfall (Scraper Blocked)' : (isHeavyQuery ? 'Hybrid API (Priority)' : 'Polyglot Search 2.0')
             } : { success: false, search_date: searchDate, message: "Informasi tidak ditemukan atau mesin pencari diblokir." };
 

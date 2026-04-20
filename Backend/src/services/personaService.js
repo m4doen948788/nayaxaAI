@@ -117,7 +117,16 @@ const personaService = {
 
 ${existingPersona ? `Profil lama:\n"${existingPersona}"\n\n` : ''}Percakapan terbaru:\n${transcript}
 
-Fokus pada: (1) gaya bicara & formalitas (DETEKSI apakah user menggunakan bahasa santai/gaul seperti 'gue/lo/gw/elu'), (2) topik atau data yang sering ditanyakan, (3) preferensi format jawaban (termasuk panggilan kesayangan), (4) konteks kerja. Output HANYA paragraf profil, tidak ada teks lain.`;
+Fokus pada: 
+1. TINGKAT FORMALITAS: Deteksi spektrum bahasa user:
+   - FORMAL: Menggunakan Saya/Anda, kalimat baku, profesional tinggi.
+   - SEMI-FORMAL: Menggunakan Aku/Kamu, bahasa sopan tapi tidak kaku.
+   - SANTAI/SLANG: Menggunakan Gue/Lo, Gw/Lu, Ane/Ente, bahasa gaul urban, atau singkatan intens.
+2. PANGGILAN: Bagaimana user ingin disapa (Nama, Mas, Mbak, Pak, Bu, atau panggilan khusus).
+3. TOPIK: Data atau bidang apa yang sering ditanyakan.
+4. KONTEKS KERJA: Posisi atau tanggung jawab yang tersirat.
+
+Output HANYA satu paragraf profil kepribadian, jangan berikan teks pembuka atau penutup.`;
 
                 // 9. Call AI analyzer (provided by controller)
                 const newPersona = await aiAnalyzer(analysisPrompt);

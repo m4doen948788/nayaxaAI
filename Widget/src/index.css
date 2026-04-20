@@ -27,3 +27,91 @@
 .animate-bounce {
   animation: bounce 1s infinite;
 }
+
+/* Premium Markdown Table Styling */
+.nayaxa-markdown table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 12px 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  font-size: 13px;
+  background-color: #ffffff;
+}
+
+.nayaxa-markdown th {
+  background-color: #f8fafc;
+  color: #475569;
+  font-weight: 700;
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.nayaxa-markdown td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #334155;
+  line-height: 1.5;
+}
+
+.nayaxa-markdown tr:last-child td {
+  border-bottom: none;
+}
+
+.nayaxa-markdown tr:nth-child(even) {
+  background-color: #fdfdfd;
+}
+
+.nayaxa-markdown tr:hover {
+  background-color: #f1f5f9;
+}
+
+/* Scrollable container for tables */
+.nayaxa-markdown {
+  overflow-x: auto;
+  max-width: 100%;
+  font-size: 16px !important;
+  line-height: 1.6;
+  color: inherit;
+  text-align: justify;
+}
+
+.nayaxa-markdown p, 
+.nayaxa-markdown li,
+.nayaxa-markdown span,
+.nayaxa-markdown a,
+.nayaxa-markdown strong,
+.nayaxa-markdown em {
+  font-size: 16px !important;
+  line-height: 1.6;
+}
+
+.nayaxa-markdown p {
+  margin: 0 0 10px 0 !important;
+}
+
+.nayaxa-markdown ul, .nayaxa-markdown ol {
+  margin: 0 0 10px 0 !important;
+  padding-left: 20px !important;
+}
+
+.nayaxa-markdown li {
+  margin: 2px 0 !important;
+  padding: 0 !important;
+}
+
+.nayaxa-markdown li > p {
+  margin: 0 !important;
+  display: inline !important;
+}
+
+.nayaxa-markdown h1 { font-size: 1.25em; margin: 16px 0 8px 0; }
+.nayaxa-markdown h2 { font-size: 1.15em; margin: 14px 0 8px 0; }
+.nayaxa-markdown h3 { font-size: 1.1em; margin: 12px 0 6px 0; }
+.nayaxa-markdown h1, .nayaxa-markdown h2, .nayaxa-markdown h3 {
+  font-weight: 700;
+  color: #1e293b;
+}

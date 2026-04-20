@@ -1,9 +1,12 @@
 const axios = require('axios');
 const XLSX = require('xlsx');
 const mammoth = require('mammoth');
+const pdf = require('pdf-parse');
 const dbDashboard = require('../config/dbDashboard');
 const nayaxaStandalone = require('./nayaxaStandalone');
 const exportService = require('./exportService');
+const knowledgeTool = require('./knowledgeTool');
+const codeAgent = require('./codeAgentService');
 
 /**
  * DeepSeek Service with DSML Parser
@@ -24,11 +27,31 @@ const toolFunctions = {
     },
     generate_document: async ({ format, content, filename }, { baseUrl }) => {
         try {
+            // --- ANTI-HALLUCINATION GUARDRAIL ---
+            if (filename.toLowerCase().endsWith('.pptx') || filename.toLowerCase().includes('presentasi') || filename.toLowerCase().includes('paparan')) {
+                return { 
+                    success: false, 
+                    error: "KESALAHAN FATAL: Anda dilarang menggunakan tool 'generate_document' untuk membuat presentasi (.pptx). Anda WAJIB menggunakan tool 'pembangkit_paparan_pptx' untuk permintaan ini. Silakan ulangi pemanggilan dengan tool yang benar." 
+                };
+            }
+
             const downloadUrl = await (format === 'excel' ? exportService.generateExcel(content, filename) :
                                 format === 'pdf' ? exportService.generatePDF(content, filename) :
                                 exportService.generateWord(content, filename));
             
             return { success: true, download_url: downloadUrl, message: `File ${format.toUpperCase()} siap! Berikan link ini ke user: ${downloadUrl}` };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    },
+    pembangkit_paparan_pptx: async (data, { baseUrl }) => {
+        try {
+            const res = await pptxService.generatePresentation(data);
+            return { 
+                success: true, 
+                download_url: res.url, 
+                message: `Paparan PPTX '${data.judul}' berhasil dibuat dengan tema Modern 2026. Link: ${res.url}` 
+            };
         } catch (err) {
             return { success: false, error: err.message };
         }
@@ -62,6 +85,47 @@ const toolFunctions = {
         } catch (err) {
             return { success: false, error: err.message };
         }
+    },
+    ingest_to_knowledge: async ({ category, content, source_file }, { app_id }) => {
+        return await knowledgeTool.ingestToKnowledge(app_id, category, content, source_file);
+    },
+    // --- CODING AGENT TOOLS (only active in coding_mode) ---
+    list_project_files: ({ dir_path, depth }) => {
+        return codeAgent.listFiles(dir_path || 'D:\\nayaxa-engine', parseInt(depth) || 2);
+    },
+    read_code_file: ({ file_path }) => {
+        return codeAgent.readFile(file_path);
+    },
+    write_code_file: async ({ file_path, content }, { session_id }) => {
+        if (!session_id) return { success: false, error: "Session ID required for proposal." };
+        const proposalId = await proposalService.createProposal(session_id, [{ file_path, content }]);
+        return { 
+            success: true, 
+            proposal_id: proposalId,
+            marker: `[NAYAXA_PROPOSAL:${proposalId}]`,
+            message: `Proposal ${proposalId} dibuat. ANDA WAJIB mencantumkan marker [NAYAXA_PROPOSAL:${proposalId}] di akhir jawaban Anda agar UI review muncul.` 
+        };
+    },
+    propose_code_changes: async ({ changes }, { session_id }) => {
+        if (!session_id) return { success: false, error: "Session ID required for proposal." };
+        let parsedChanges = changes;
+        if (typeof changes === 'string') {
+            try { parsedChanges = JSON.parse(changes); } catch (e) { return { error: "Format changes harus JSON array." }; }
+        }
+        const proposalId = await proposalService.createProposal(session_id, parsedChanges);
+        return { 
+            success: true, 
+            proposal_id: proposalId,
+            marker: `[NAYAXA_PROPOSAL:${proposalId}]`,
+            message: `Proposal ${proposalId} (Multi-file) dibuat. ANDA WAJIB mencantumkan marker [NAYAXA_PROPOSAL:${proposalId}] di akhir jawaban Anda.` 
+        };
+    },
+    search_in_codebase: ({ dir_path, query }) => {
+        return codeAgent.searchInFiles(dir_path || 'D:\\nayaxa-engine', query);
+    },
+    execute_database_update: async ({ query }) => {
+        const jsonResult = await nayaxaStandalone.executeSystemQuery(query);
+        return { database_result: jsonResult };
     }
 };
 
@@ -121,7 +185,7 @@ const DEEPSEEK_TOOLS = [
     } },
     { type: "function", function: { 
         name: "generate_document", 
-        description: "Membuat file dokumen (PDF, Excel, atau Word).", 
+        description: "Membuat file dokumen (PDF, Excel, atau Word). DILARANG KERAS menggunakan tool ini untuk membuat presentasi/paparan/slides.", 
         parameters: { 
             type: "object", 
             properties: { 
@@ -130,6 +194,30 @@ const DEEPSEEK_TOOLS = [
                 filename: { type: "string", description: "Nama file" }
             }, 
             required: ["format", "content", "filename"] 
+        } 
+    } },
+    { type: "function", function: { 
+        name: "pembangkit_paparan_pptx", 
+        description: "Satu-satunya tool untuk membuat dokumen presentasi resmi (.pptx) dengan desain modern Bapperida 2026. Gunakan ini untuk slides/paparan.", 
+        parameters: { 
+            type: "object", 
+            properties: { 
+                judul: { type: "string", description: "Judul besar presentasi" },
+                konteks: { type: "string", description: "Keterangan singkat" },
+                slides: {
+                    type: "array",
+                    items: {
+                        type: "object",
+                        properties: {
+                            title: { type: "string", description: "Judul slide" },
+                            points: { type: "array", items: { type: "string" }, description: "Poin-poin materi" },
+                            layout_type: { type: "string", enum: ["BULLETS", "TWO_COLUMN"] }
+                        },
+                        required: ["title", "points"]
+                    }
+                }
+            }, 
+            required: ["judul", "slides"] 
         } 
     } },
     { type: "function", function: { 
@@ -173,116 +261,190 @@ const DEEPSEEK_TOOLS = [
     } }
 ];
 
+// --- CODING AGENT TOOLS - Only injected when coding_mode = true ---
+const CODING_AGENT_TOOLS = [
+    { type: "function", function: {
+        name: "list_project_files",
+        description: "Mendaftar isi direktori (folder dan file) di dalam proyek. Gunakan untuk memahami struktur proyek sebelum membaca kode.",
+        parameters: { type: "object", properties: {
+            dir_path: { type: "string", description: "Path absolut direktori yang ingin dilihat. Contoh: D:\\nayaxa-engine\\Backend\\src" },
+            depth: { type: "number", description: "Kedalaman rekursi (1-3). Default 2." }
+        }, required: ["dir_path"] }
+    }},
+    { type: "function", function: {
+        name: "read_code_file",
+        description: "Membaca isi lengkap sebuah file kode. Gunakan ini untuk menganalisis bug, memahami logika, atau sebelum membuat perubahan.",
+        parameters: { type: "object", properties: {
+            file_path: { type: "string", description: "Path absolut file yang ingin dibaca. Contoh: D:\\nayaxa-engine\\Backend\\src\\services\\nayaxaDeepSeekService.js" }
+        }, required: ["file_path"] }
+    }},
+    { type: "function", function: {
+        name: "write_code_file",
+        description: "Menyiapkan proposal perubahan untuk SATU file. Kode TIDAK akan langsung ditulis ke disk, melainkan masuk ke tahap review user.",
+        parameters: { type: "object", properties: {
+            file_path: { type: "string", description: "Path absolut file." },
+            content: { type: "string", description: "Konten baru file secara lengkap." }
+        }, required: ["file_path", "content"] }
+    }},
+    { type: "function", function: {
+        name: "propose_code_changes",
+        description: "Menyiapkan proposal perubahan untuk BANYAK file sekaligus dalam satu paket review. Gunakan ini untuk efisiensi jika mengubah beberapa file sekaligus.",
+        parameters: { type: "object", properties: {
+            changes: { 
+                type: "array", 
+                items: {
+                    type: "object",
+                    properties: {
+                        file_path: { type: "string" },
+                        content: { type: "string" }
+                    },
+                    required: ["file_path", "content"]
+                },
+                description: "Daftar file yang akan diubah."
+            }
+        }, required: ["changes"] }
+    }},
+    { type: "function", function: {
+        name: "search_in_codebase",
+        description: "Mencari teks/pola tertentu di seluruh file dalam direktori proyek. Berguna untuk menemukan di mana fungsi atau variabel digunakan.",
+        parameters: { type: "object", properties: {
+            dir_path: { type: "string", description: "Path absolut direktori yang ingin dicari." },
+            query: { type: "string", description: "Teks atau nama fungsi yang ingin dicari." }
+        }, required: ["dir_path", "query"] }
+    }},
+    { type: "function", function: {
+        name: "execute_database_update",
+        description: "Mengeksekusi SQL query untuk manipulasi data atau struktur database (INSERT, UPDATE, DELETE, ALTER, DROP, CREATE) secara asinkron.",
+        parameters: { type: "object", properties: {
+            query: { type: "string", description: "Query SQL DML atau DDL yang akan dieksekusi secara langsung terhadap database." }
+        }, required: ["query"] }
+    }}
+];
+
+const TOOL_STEP_LABELS = {
+    search_internet:           { icon: '🌐', label: 'Mencari informasi di internet...' },
+    execute_sql_query:         { icon: '📊', label: 'Menganalisis database...' },
+    search_database:           { icon: '📊', label: 'Menganalisis database...' },
+    generate_document:         { icon: '📄', label: 'Membuat dokumen...' },
+    generate_chart:            { icon: '📈', label: 'Membuat grafik visualisasi...' },
+    search_files_and_knowledge:{ icon: '🔍', label: 'Mencari di basis pengetahuan...' },
+    fill_excel_template:       { icon: '📋', label: 'Mengisi template Excel...' },
+    ingest_to_knowledge:       { icon: '🧠', label: 'Menyimpan ke basis pengetahuan...' },
+    list_project_files:        { icon: '📁', label: 'Menjelajahi struktur proyek...' },
+    read_code_file:            { icon: '📄', label: 'Membaca isi file kode...' },
+    write_code_file:           { icon: '📝', label: 'Menyiapkan proposal kode...' },
+    propose_code_changes:      { icon: '📦', label: 'Menyiapkan paket perubahan...' },
+    search_in_codebase:        { icon: '🔍', label: 'Mencari di dalam codebase...' },
+    execute_database_update:   { icon: '🛠️', label: 'Memodifikasi database...' },
+};
+
 const nayaxaDeepSeekService = {
-    chatWithNayaxa: async (userMessage, fileContext, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, baseUrl = '', fullDate = '', files = [], nama_instansi = 'N/A', personaPromptSnippet = '') => {
+    chatWithNayaxa: async (userMessage, fileContext, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, baseUrl = '', fullDate = '', files = [], nama_instansi = 'N/A', personaPromptSnippet = '', userProfile = null, lastActivityContext = null, coding_mode = false, onStepCallback = null, signal = null, activeSessionId = null) => {
+        if (signal?.aborted) return 'Request aborted.';
         try {
             const apiKey = process.env.DEEPSEEK_API_KEY;
             const schemaMapString = await nayaxaStandalone.getDatabaseSchema();
             
             const system = `Identitas ANDA: Nayaxa, asisten AI dari Bapperida yang dibuat oleh Sammy. 
-            Sifat & Gaya Bahasa: Sangat ceria, ramah, profesional, dan empatik. Di akhir setiap penjelasan, SELALU tawarkan bantuan ekstra atau berikan satu pertanyaan pendek untuk menggali lebih dalam apa yang user butuhkan.
             PENTING: DILARANG KERAS MENGGUNAKAN EMOJI APAPUN.
-            Identitas USER: ${user_name} (Profil ID: ${profil_id || 'N/A'}) dari Instansi: ${nama_instansi}. 
-            Jika user bertanya "siapa saya?", jawablah dengan nama user (${user_name}).
+            
+            PROTOKOL AI DOCUMENT WORKSTATION (EDITOR MODE):
+            - Jika user mengirimkan pesan dengan awalan [NAYAXA_EDITOR_FEEDBACK], ini berarti Anda sedang berada di mode perbaikan dokumen di Workstation.
+            - TUGAS ANDA: Pilihlah tool yang sesuai dengan jenis dokumen yang sedang dibuka:
+                a. Jika sedang mengedit PRESENTASI/SLIDE (.pptx) -> WAJIB panggil 'pembangkit_paparan_pptx'.
+                b. Jika sedang mengedit DOKUMEN TEKS/SURAT -> WAJIB panggil 'generate_document'.
+            - DILARANG KERAS membuat file Word jika user sedang melakukan revisi pada file presentasi.
+            - ANALISIS konten asli dokumen yang diberikan untuk menentukan tool mana yang harus dipanggil.
+            
+            PENTING - FORMAT JAWABAN:
+            - SELALU gunakan format Markdown (Heading, Bold, Bullet Points, dan Tabel Markdown) dalam setiap jawaban agar terlihat rapi, premium, dan profesional di aplikasi Dashboard.
+            - DILARANG KERAS mengeluarkan output berupa JSON mentah atau blok kode data mentah langsung ke dalam chat. 
+            - Jika Anda ingin menampilkan data terstruktur (seperti Lembar Kerja atau List), gunakan Tabel Markdown atau List bertingkat.
+            - JSON hanya diperbolehkan jika berada di dalam parameter fungsi/tool (seperti generate_chart).
+            - Pastikan seluruh judul menggunakan Heading 2 (##) atau Heading 3 (###).
+            
+            ATURAN KRITIS - ANALISIS DOKUMEN:
+            - Jika konten file tersedia: analisis HANYA berdasarkan konten yang ada di DATA FILE. JANGAN menambahkan informasi yang tidak ada di dokumen.
+            - Jika konten file KOSONG, mengandung peringatan 'PERINGATAN', atau ERROR: JANGAN PERNAH MENGARANG isi dokumen. Beritahu user dengan jujur bahwa file tidak dapat dibaca dan minta mereka mengirim ulang file dalam format yang berbeda.
+            - DILARANG KERAS menggunakan pengetahuan internal untuk 'mengisi' konten dokumen yang tidak terbaca.
+            
+            Identitas USER: ${user_name} dari Instansi: ${nama_instansi} (ID: ${instansi_id}). 
+            ATURAN MENYAPA: Sapa user dengan namanya (${user_name}).
+            PENTING: DILARANG KERAS menyebutkan atau memunculkan "ID", "NIP", "Profil ID", "Instansi ID", atau angka identitas teknis lainnya dalam percakapan (seperti: "ID: 151", "id_kegiatan: 42", dsb) kecuali user bertanya secara spesifik. Gunakan ID Instansi yang disediakan (${instansi_id}) untuk pemanggilan tool/fungsi yang membutuhkannya secara internal. Fokuslah pada interaksi yang manusiawi, ramah, dan profesional. Bersihkan semua data hasil query dari kolom ID sebelum menyajikannya kepada user.
             ${personaPromptSnippet}
-            PENTING: Sesuaikan tingkat formalitas Anda dengan Profil Kepribadian User. Jika user terbiasa santai (Gue/Lo), Anda diperbolehkan menggunakan gaya bicara yang serupa namun tetap sopan, ceria, dan membantu.
+            ${lastActivityContext ? `\nKONTEKS AKTIVITAS TERAKHIR USER: "${lastActivityContext}"\nSapa user dengan hangat dan hubungkan kalimat pembuka/pertanyaan Anda dengan aktivitas tersebut secara proaktif (Predictive Greeting).\n` : ''}
+            PENTING - ADAPTASI FORMALITAS: Sesuaikan tingkat formalitas Anda dengan Profil Kepribadian User di atas. Jika user terbiasa santai (Gue/Lo, Gw/Lu, Ane/Ente), Anda diperbolehkan menggunakan gaya bicara yang serupa (casual-professional) namun tetap sopan, ceria, dan membantu. Jangan gunakan emoji. Jika user formal, tetaplah sangat formal (Saya/Anda).
             
             ATURAN GRAFIK: Jika user meminta grafik/chart, Anda WAJIB menggunakan tool 'generate_chart'. JANGAN PERNAH memberikan kode Python atau CSV mentah. Gunakan tool tersebut untuk membuat visualisasi interaktif.
             CATATAN EKSPOR: Jelaskan ke user bahwa tombol 'Unduh PNG' adalah untuk mengambil gambar grafik, sedangkan 'Unduh Excel' adalah untuk mengambil data angka mentahnya agar mereka bisa mengolahnya lagi di Excel.
+            
+            PENTING - PENGIRIMAN LINK & REFERENSI:
+            - Jika Anda menggunakan informasi dari internet (search_internet), Anda WAJIB langsung mencantumkan link sumbernya di PROSES jawaban atau di akhir pesan.
+            - DILARANG KERAS bertanya "apakah Anda ingin linknya?" atau sejenisnya. Langsung berikan link tersebut secara otomatis dan instan.
+            - Format Daftar Referensi harus jelas dan menonjol di bawah tajuk "SUMBER REFERENSI:".
+            
             CATATAN DOKUMEN & FILE: 
             - Jika user meminta laporan baru, gunakan tool 'generate_document'. 
-            - Jika user bertanya tentang "Pencarian Dokumen/File", atau ingin "mencari file yang sudah ada", Anda WAJIB menggunakan tool 'search_files_and_knowledge'. 
+            - Jika user bertanya tentang dokumen, mencari file, atau meminta file spesifik ("Mana dokumen X?", "Minta file Y"), Anda WAJIB LANGSUNG menggunakan tool 'search_files_and_knowledge' tanpa basa-basi.
+            - JANGAN PERNAH mengatakan "Saya akan mencari..." atau "Tunggu sebentar...". LANGSUNG berikan linknya di jawaban pertama Anda.
             - Tool ini akan mencari di database file (DOKUMEN_UPLOAD) dan database pengetahuan (NAYAXA_KNOWLEDGE).
             - Berikan link download untuk hasil berkategori [FILE] dan ringkasan informasi untuk hasil [KNOWLEDGE].
-            - Format Link: [Unduh (Nama File)](URL_DARI_TOOL). Ganti 'Nama File' dengan nama asli filenya. Letakkan link ini secara menonjol di akhir pesan Anda secara jelas.
+            - Format Link: [Unduh (Nama File)](URL_DARI_TOOL). Letakkan link ini secara menonjol di bagian atas atau akhir pesan Anda dengan format tombol Markdown yang jelas.
             
             PENGISIAN EXCEL: Jika user mengunggah file Excel (Template) dan meminta Anda untuk "mengisi", "lengkapi", atau "masukkan data" ke dalamnya, gunakan tool 'fill_excel_template'. 
             TEKNIK PENGISIAN: 
             - Gunakan key "uraian" atau "label" untuk mencocokkan baris yang ingin diisi. 
             - Gunakan key lain yang sesuai dengan Nama Header Kolom (misal: "hasil verifikasi", "rekomendasi", "keterangan") untuk mengisi nilainya.
             - Contoh: [{"uraian": "Lokasi", "rekomendasi": "Masukkan alamat lengkap"}] akan mencari baris yang mengandung kata 'Lokasi' dan mengisi kolom 'REKOMENDASI' di baris tersebut.
-            BERIKAN LINK DOWNLOAD HASILNYA kepada user.
+            BERIKAN LINK DOWNLOAD HASILNYA kepada user.`;
+
+        let projectStructureInfo = '';
+        if (fileContext) {
+            projectStructureInfo = `\nSTRUKTUR FILE PROYEK (Navigasi Cepat):\n${fileContext}\n`;
+        }
+
+        const codingAgentPrompt = `Identitas: Nayaxa Coding Agent (Senior System Engineer).
+PROTOKOL EKSEKUSI MUTLAK:
+- ANDA ADALAH ROBOT EKSEKUTOR. Abaikan seluruh sapaan ramah atau sejarah percakapan sebelumnya. 
+- DILARANG KERAS BERTANYA atau meminta informasi/klarifikasi kepada user (No Questions).
+- Jika Anda tidak tahu lokasi file atau struktur tabel, Anda WAJIB menggunakan tool 'search_in_codebase' secara mandiri.
+- ANALISIS SECARA DIAM: Jangan tuliskan analisis Anda di chat.
+
+STRUKTUR DATABASE ANDA (Gunakan ini, JANGAN BERTANYA LAGI):
+${schemaMapString}
+${projectStructureInfo}
+WORKFLOW:
+1. Begitu menerima instruksi, langkah pertama WAJIB memanggil tool (Search/Read). JANGAN memberikan jawaban teks di turn pertama.
+2. Identifikasi file/tabel yang relevan secara mandiri.
+3. Lakukan perubahan dengan 'propose_code_changes' atau 'write_code_file'.
+4. Akhiri jawaban HANYA dengan ringkasan 1 kalimat perubahan dan marker [NAYAXA_PROPOSAL:id].`;
+
+        const generalPersonaPrompt = `Identitas ANDA: Nayaxa, asisten AI dari Bapperida yang dibuat oleh Sammy.
+Gaya Bahasa: Sangat ceria, ramah, profesional, dan empatik. Di akhir setiap penjelasan, SELALU tawarkan bantuan ekstra atau berikan satu pertanyaan pendek.
+PENTING: DILARANG KERAS MENGGUNAKAN EMOJI APAPUN.
+        
+PENTING - ADAPTASI FORMALITAS: Sesuaikan tingkat formalitas Anda dengan Profil Kepribadian User (${userProfile?.detected_formality || 'Formal'}). Jika user terbiasa santai (Gue/Lo, Gw/Lu), gunakan gaya casual-professional namun tetap sopan. Jika user formal, gunakan Saya/Anda.
+        
+${lastActivityContext ? `\nKONTEKS AKTIVITAS: "${lastActivityContext}"\nSapa user dengan hangat dan hubungkan dengan aktivitas tersebut.\n` : ''}`;
+
+        const systemInstruction = coding_mode ? codingAgentPrompt : `
+            ${system}
+            ${generalPersonaPrompt}
             
-            WAKTU SEKARANG: ${fullDate || `Bulan ${month}, Tahun ${year}`}. Gunakan informasi ini jika user bertanya tentang hari atau tanggal hari ini secara spesifik.
+            WAKTU SEKARANG: ${fullDate || `Bulan ${month}, Tahun ${year}`}.
             
-            KOMITMEN ANDA (Etika & Akurasi):
-            1. VERIFIKASI GANDA: Selalu cross-check informasi (terutama angka dan nama pejabat). Periksa hasil tool call dengan teliti sebelum menyimpulkan.
-            2. LABEL SUMBER: Sebutkan sumber spesifik setiap informasi (misal: "Berdasarkan rilis detik.com (2 Jan 2025)..."). Gunakan link dari JDIH (jdih.bogorkab.go.id atau jdih.go.id) sebagai prioritas utama jika jawaban berkaitan dengan regulasi/hukum/aturan daerah.
-            3. LABEL KEPERCAYAAN: Jika hasil pencarian bertanda 'TERVERIFIKASI', sampaikan dengan yakin. Jika 'BELUM TERVERIFIKASI', berikan disclaimer: "Catatan: Informasi ini belum dapat diverifikasi dari sumber resmi. Harap konfirmasi langsung ke sumber terkait."
-            4. DISCLAIMER WAJIB: Berikan catatan jika informasi bersifat dinamis atau bisa berubah, terutama untuk kepemimpinan daerah periode transisi.
-            5. FALLBACK WAJIB: Jika data tidak tersedia atau tidak lengkap, SARANKAN USER untuk memeriksa sendiri sumber spesifik: jdih.bogorkab.go.id, id.wikipedia.org, pilkada2024.kpu.go.id, detik.com, kompas.com.
-            6. SUMBER REFERENSI: Di AKHIR JAWABAN, Anda WAJIB menyertakan daftar link sumber yang Anda gunakan dalam format Markdown [Judul Artikel](URL) (domain, search_date) di bawah tajuk "SUMBER REFERENSI:". Ekstrak 'domain' dari link sumber tersebut (misal: kompasiana.com, detik.com, dsb) dan sertakan tepat di samping search_date di dalam kurung.
+            KOMITMEN:
+            1. VERIFIKASI GANDA: Cross-check angka dan nama pejabat.
+            2. LABEL SUMBER: Sebutkan sumber spesifik. Gunakan link JDIH sebagai prioritas utama.
+            3. TABEL & MARKDOWN: Gunakan Tabel Markdown untuk data terstruktur. DILARANG JSON mentah.
+            4. DIAGRAM: Gunakan 'mermaid' (graph TD/LR) untuk alur kerja.
             
-            ATURAN KOMUNIKASI PENTING (DILARANG BERPIKIR KERAS / INTERNAL MONOLOGUE):
-            - JANGAN PERNAH menjelaskan proses pencarian Anda kepada user (Contoh SALAH: "Mari saya cari di internet...", "Saya akan membuka halaman Wikipedia...", "Tunggu sebentar saya cek database...").
-            - LANGSUNG BERIKAN JAWABAN AKHIR dari hasil pencarian Anda, terlepas apakah data itu lengkap atau tidak.
-            - JANGAN PERNAH memberikan pesan menggantung tanpa konklusi.
+            ${schemaMapString}
             
-            PENTING - AKURASI DATA INTERNAL:
-            1. MULTI-TENANCY: Anda sedang melayani user dari Instansi: ${nama_instansi} (ID Internal: ${instansi_id}). Saat membuat SQL query, Anda WAJIB memfilter hasil berdasarkan instansi_id kolom yang sesuai (misal: p.instansi_id = ${instansi_id}) di tabel profil_pegawai, kegiatan_harian, atau tabel lain yang relevan. Jangan pernah menampilkan data dari instansi lain!
-            2. NAMA & BIDANG: Jika user bertanya tentang pegawai di bidang tertentu (misal: PPM), cari dulu ID atau nama bidang yang sesuai di tabel 'master_bidang_instansi' menggunakan JOIN.
-            
-            PENTING - STRATEGI PENCARIAN (BACA DENGAN TELITI):
-            A. JIKA USER MENCARI ORANG BIASA, TOKOH UMUM, ATAU TOPIK UMUM (Bukan Pemilu/Politik):
-               - JANGAN gunakan format pencarian pejabat/pelantikan.
-               - WAJIB menyertakan link sumber dari id.wikipedia.org (jika tersedia) sebagai referensi dasar.
-               - Lakukan ANALISIS LINTAS SUMBER (Cross-check): Bandingkan informasi dari berbagai sumber yang ditemukan.
-               - PENANGANAN KONTRADIKSI: Jika terdapat perbedaan data antar sumber (misal: beda angka/fakta), Anda WAJIB menyebutkan perbedaan tersebut secara eksplisit beserta disclaimernya (Contoh: "Berdasarkan sumber A, faktanya adalah X. Namun menurut Wikipedia/Sumber B, faktanya adalah Y. Oleh karena itu, data ini mungkin memiliki variasi.").
-               - Berikan ringkasan natural dan objektif sesuai hasil analisis yang didapat.
-            
-            B. JIKA USER MENCARI PEJABAT PUBLIK ATAU HASIL PILKADA:
-            1. PROTOKOL BERPIKIR (Wajib Diikuti secara urut):
-               - Verifikasi Temporal (Waktu): Pastikan tanggal hari ini adalah ${new Date().getFullYear()}. JANGAN gunakan / sebutkan data periode lama jika data hasil Pilkada terbaru (2025-2030) sudah ditemukan di hasil pencarian.
-               - SKEPTISISME PJ (ACTING): Di tahun 2026, Gubernur/Bupati/Walikota seharusnya adalah PEJABAT DEFINITIF terpilih hasil Pilkada 2024 (dilantik 20 Feb 2025). Jika hasil pencarian menyebutkan nama Penjabat (Pj), Plt, atau Pjs, periksa apakah ada nama lain yang berstatus "Terpilih" atau "Dilantik 2025". Jika ada, nama Pj tersebut adalah MANTAN/TIDAK LAGI MENJABAT.
-               - ANTI-HALUSINASI JABAR: Bey Machmudin adalah Penjabat (Pj). Dedi Mulyadi adalah yang Terpilih 2025-2030. JANGAN PERNAH menyebut Bey Machmudin sebagai pejabat "Terpilih" atau "Definitif" di Jawa Barat.
-               - Pencarian Bertingkat: 
-                 Tahap 1: Jelaskan status jabatan (Definitif vs Penjabat/Pj).
-                 Tahap 2: Identifikasi nama Kepala Daerah dan Wakilnya dengan gelar lengkap.
-                 Tahap 3: Sebutkan detail pelantikan (Tanggal, Tempat, dan Dilantik Oleh Siapa).
-               - Validasi Data: Sertakan statistik pendukung dari hasil pencarian (misal: persentase suara pemenangan) untuk meningkatkan kredibilitas, jika ada di hasil pencarian.
-               - Format Output: Gunakan Bullet Points untuk data teknis dan Bold Text untuk nama orang/lembaga penting.
-            
-            2. BATASAN JAWABAN PEJABAT PUBLIK:
-               - Jika data pelantikan ada di masa depan (belum dilantik), sebutkan statusnya dengan jelas sebagai "Kepala Daerah Terpilih".
-               - Hindari opini politik; fokus murni pada data administratif dan rekam jejak resmi.
-               
-            3. URUTAN PRIORITAS SUMBER (WAJIB DIIKUTI):
-               a. Lembaga Riset/Jurnal (nature.com, nasa.gov, brin.go.id, dll) - Prioritas Tertinggi untuk Sains/Teknologi.
-               b. JDIH Pemerintah (.go.id) - Untuk Regulasi/Aturan.
-               c. KPU resmi (pilkada2024.kpu.go.id).
-               d. Media besar utama (kompas.com / detik.com / cnnindonesia.com).
-               e. Wikipedia Indonesia (PRIORITAS TERENDAH).
-               
-            4. KRITERIA KREDIBILITAS ILMIAH:
-               - JIKA informasi berkaitan dengan Sains, Biologi, Antariksa, atau Penelitian: Anda WAJIB mengutamakan data dari sumber berkategori 'RESEARCH'.
-               - PERINGATAN WAJIB: Jika jawaban Anda HANYA didasarkan pada sumber media berita umum (source_type: 'NEWS') untuk topik ilmiah/penelitian, Anda WAJIB mencantumkan catatan di awal atau akhir jawaban: "Info: Jawaban ini bersumber dari media berita umum, bukan dari jurnal atau lembaga riset resmi."
-               
-            5. ELEMEN WAJIB DALAM JAWABAN (sertakan jika tersedia):
-               - Link sumber yang akurat (Full URL).
-               - Nama lengkap dengan gelar/titel.
-               - Periode jabatan (YYYY-YYYY).
-               - Tanggal pelantikan (jika ada).
-               - Nama wakil/deputy (jika ada).
-               - Status verifikasi sumber ('TERVERIFIKASI' atau 'BELUM TERVERIFIKASI').
-               
-            6. STRATEGI FALLBACK BERTAHAP (jika hasil pertama kosong/tidak relevan):
-               - Coba query alternatif: "[Jabatan] [Daerah] terpilih"
-               - Kemudian: "Pemimpin [Daerah] periode [Tahun]"
-               - Terakhir: Sarankan user cek langsung id.wikipedia.org atau pilkada2024.kpu.go.id.
-            5. KHUSUS PERIODE TRANSISI 2024-2026: Sebutkan tanggal pelantikan dan status transisi kekuasaan dengan jelas.
-            6. KONTEKS PENTING (Wajib Diingat):
-               - Pilkada serentak telah dilaksanakan tahun 2024.
-               - Pelantikan serentak untuk Kepala Daerah terpilih adalah 20 Februari 2025.
-               - Masa jabatan mereka adalah 5 tahun (2025-2030).
-               - Jika menemukan nama tokoh yang dilantik pada/sekitar 20 Februari 2025, pastikan dia adalah pejabat terpilih yang sah untuk periode 2025-2030.
-               - PERINGATAN TOKOH TRANSISI: Hindari menyebut Hassanudin (Sumut), Iwan Setiawan (Bogor), Bey Machmudin (Jabar), atau Pj lainnya sebagai "Gubernur/Bupati Sekarang" jika ada data pelantikan Feb 2025 untuk Bobby Nasution (Sumut), Rudy Susmanto (Bogor), Dedi Mulyadi (Jabar), dsb.
-               - CALON TUNGGAL: JANGAN menyebut seseorang terpilih sebagai "Calon Tunggal" kecuali hasil pencarian secara eksplisit (dari KPU/Detik/Kompas) menyatakan demikian.
-            7. DILARANG menggunakan pengetahuan internal untuk data 2024, 2025, 2026. Selalu ambil dari internet.
-            
-            FITUR LOKASI (GPS): Jika user bertanya tentang lokasi sekitarnya, Anda WAJIB menanyakan apakah user bersedia mengaktifkan GPS. Sertakan penanda: [ACTION:REQUEST_LOCATION] di akhir jawaban Anda.
-            
-            ${schemaMapString}`;
-            
+            PENTING - STRATEGI PENCARIAN & PEJABAT:
+            (Ikuti protokol verifikasi temporal 2026, validasi Kepala Daerah Terpilih 2025-2030, dan sapa user ${user_name} dengan hangat).
+        `;
+
             // --- MULTI-FILE PRE-PROCESSOR ---
             let firstImage = null;
             const attachmentList = Array.isArray(files) ? files : [];
@@ -290,6 +452,7 @@ const nayaxaDeepSeekService = {
             for (const file of attachmentList) {
                 const { base64, mimeType } = file;
                 if (!base64 || !mimeType) continue;
+                const fileName = file.name || 'file-tanpa-nama';
 
                 const isExcel = mimeType?.includes('spreadsheetml') || mimeType?.includes('excel') || mimeType?.includes('officedocument.spreadsheetml.sheet');
                 const isCSV = mimeType?.includes('csv');
@@ -307,19 +470,46 @@ const nayaxaDeepSeekService = {
                             const csv = XLSX.utils.sheet_to_csv(sheet);
                             sheetData += `\n--- Sheet: ${sheetName} ---\n${csv}\n`;
                         });
-                        fileContext = (fileContext ? fileContext + '\n\n' : '') + `DATA FILE (${isExcel || extension.includes('xls') ? 'EXCEL' : 'CSV'}):\n${sheetData}`;
+                        fileContext = (fileContext ? fileContext + '\n\n' : '') + `DATA FILE (${isExcel || extension.includes('xls') ? 'EXCEL' : 'CSV'}) - NAMA FILE: "${fileName}":\n${sheetData}`;
                     } catch (err) {
                         console.error('DeepSeek File Pre-process Error:', err);
                     }
                 } else if (mimeType?.includes('wordprocessingml') || mimeType?.includes('msword') || extension === 'docx' || extension === 'doc') {
                     try {
-                        console.log(`[DeepSeek] Pre-processing Word file...`);
+                        console.log(`[DeepSeek] Pre-processing Word file (HTML mode)...`);
                         const cleanB64 = base64.includes('base64,') ? base64.split('base64,')[1] : base64;
                         const buffer = Buffer.from(cleanB64, 'base64');
-                        const wordResult = await mammoth.extractRawText({ buffer: buffer });
-                        fileContext = (fileContext ? fileContext + '\n\n' : '') + `DATA FILE (WORD):\n${wordResult.value}`;
+                        const wordResult = await mammoth.convertToHtml({ buffer: buffer });
+                        // Strip base64 images to prevent 400 "Request Too Large" errors while keeping structure
+                        const cleanHtml = wordResult.value.replace(/<img[^>]*>/g, '[Gambar]');
+                        fileContext = (fileContext ? fileContext + '\n\n' : '') + `DATA FILE (WORD/HTML) - NAMA FILE: "${fileName}":\n${cleanHtml}`;
+
                     } catch (err) {
                         console.error('DeepSeek Word Pre-process Error:', err);
+                    }
+                } else if (mimeType?.includes('pdf') || extension === 'pdf') {
+                    try {
+                        console.log(`[DeepSeek] Pre-processing PDF file: ${fileName}`);
+                        const cleanB64 = base64.includes('base64,') ? base64.split('base64,')[1] : base64;
+                        const buffer = Buffer.from(cleanB64, 'base64');
+                        const pdfData = await pdf(buffer);
+                        const extractedText = pdfData.text?.trim() || '';
+
+                        if (extractedText.length < 80) {
+                            console.warn(`[DeepSeek] PDF text too short (${extractedText.length} chars) - likely a scanned PDF.`);
+                            fileContext = (fileContext ? fileContext + '\n\n' : '') + 
+                                `DATA FILE (PDF - PERINGATAN) - NAMA FILE: "${fileName}":\nFile PDF ini tidak dapat dibaca secara teks. Kemungkinan besar file ini adalah dokumen hasil scan (gambar) atau PDF yang dilindungi. Konten teks tidak tersedia. JANGAN MENGARANG atau MENGASUMSIKAN isi dokumen ini.`;
+                        } else {
+                            const MAX_PDF_CHARS = 60000;
+                            const truncated = extractedText.length > MAX_PDF_CHARS;
+                            const finalText = truncated ? extractedText.slice(0, MAX_PDF_CHARS) + '\n\n[...Dokumen terpotong karena terlalu panjang...]' : extractedText;
+                            console.log(`[DeepSeek] PDF extracted: ${extractedText.length} chars${truncated ? ' (truncated)' : ''}`);
+                            fileContext = (fileContext ? fileContext + '\n\n' : '') + `DATA FILE (PDF) - NAMA FILE: "${fileName}":\n${finalText}`;
+                        }
+                    } catch (err) {
+                        console.error('DeepSeek PDF Pre-process Error:', err);
+                        fileContext = (fileContext ? fileContext + '\n\n' : '') + 
+                            `DATA FILE (PDF - ERROR) - NAMA FILE: "${fileName}":\nGagal memproses file PDF: ${err.message}. JANGAN MENGARANG isi dokumen ini.`;
                     }
                 } else if (mimeType?.startsWith('image/') && !firstImage) {
                     // DeepSeek currently only supports one image via image_url in most compatible implementations
@@ -341,7 +531,14 @@ const nayaxaDeepSeekService = {
                 const role = h.role === 'user' ? 'user' : 'assistant';
                 messages.push({ role, content: h.parts ? h.parts[0].text : h.content });
             });
-            const userTextPart = fileContext ? `${fileContext}\n\n${userMessage}` : userMessage;
+            // Build user message with file list summary prepended
+            const fileNames = attachmentList.map(f => f.name || 'unknown').join(', ');
+            const fileSummary = attachmentList.length > 0 
+                ? `[USER MENGIRIM FILE: ${fileNames}]\n` 
+                : '';
+            const userTextPart = fileContext 
+                ? `${fileContext}\n\n${fileSummary}${userMessage}` 
+                : `${fileSummary}${userMessage}`;
             if (firstImage) {
                 messages.push({
                     role: "user",
@@ -354,22 +551,29 @@ const nayaxaDeepSeekService = {
                 messages.push({ role: "user", content: userTextPart });
             }
 
+            const activeTools = coding_mode 
+                ? [...DEEPSEEK_TOOLS, ...CODING_AGENT_TOOLS] 
+                : DEEPSEEK_TOOLS;
+
             const callDeepSeek = async (msgs) => {
                 return await axios.post('https://api.deepseek.com/v1/chat/completions', {
                     model: "deepseek-chat",
                     messages: msgs,
-                    tools: DEEPSEEK_TOOLS,
+                    tools: activeTools,
                     temperature: 0.1,
                     max_tokens: 8192
-                }, { headers: { 'Authorization': `Bearer ${apiKey}` } });
+                }, { headers: { 'Authorization': `Bearer ${apiKey}` }, signal });
             };
 
             let response = await callDeepSeek(messages);
             let message = response.data.choices[0].message;
             const generatedChartMarkers = [];
+            const generatedDocLinks = [];
             let loop = 0;
+            const MAX_LOOPS = 20;
 
-            while (loop < 5) {
+            while (loop < MAX_LOOPS) {
+                if (signal?.aborted) break;
                 const nativeToolCalls = message.tool_calls || [];
                 const dsmlToolCalls = parseDSML(message.content || "");
                 const combinedToolCalls = [...nativeToolCalls, ...dsmlToolCalls];
@@ -377,30 +581,84 @@ const nayaxaDeepSeekService = {
                 if (combinedToolCalls.length === 0) break;
                 loop++;
 
+                // Prevent infinite tool error loops by halting early if nearing limit
+                if (loop === MAX_LOOPS) {
+                    message.content = (message.content || "") + "\n\n[Sistem]: Batasan maksimum interaksi (loop) telah tercapai. Harap perjelas permintaan Anda.";
+                    break;
+                }
+
                 messages.push(message);
 
-                for (const call of combinedToolCalls) {
+                // --- PARALLEL TURBO EXECUTION ---
+                // We execute all tools in the batch simultaneously to save time.
+                const toolPromises = combinedToolCalls.map(async (call) => {
                     const fn = call.function.name;
-                    const args = typeof call.function.arguments === 'string' ? JSON.parse(call.function.arguments) : call.function.arguments;
-                    
-                    // Capture the first Excel file's base64 for filling purposes
-                    const excelFile = attachmentList.find(f => f.mimeType.includes('spreadsheetml') || f.mimeType.includes('excel') || f.mimeType.includes('officedocument.spreadsheetml.sheet'));
-                    const excelBase64 = excelFile ? excelFile.base64 : null;
+                    let args;
+                    try {
+                        args = typeof call.function.arguments === 'string' ? JSON.parse(call.function.arguments) : call.function.arguments;
+                    } catch (e) { args = {}; }
 
-                    console.log(`[DeepSeek] Executing ${fn}...`);
-                    let res = await toolFunctions[fn]({ ...args, instansi_id, month, year }, { excelBase64, baseUrl });
-                    
+                    let res;
+                    const isCodingTool = ['list_project_files', 'read_code_file', 'write_code_file', 'search_in_codebase', 'execute_database_update'].includes(fn);
+
+                    // 1. SECURITY FIREWALL
+                    if (isCodingTool && !coding_mode) {
+                        console.warn(`[DeepSeek_Security] BLOCKED unauthorized attempt to call coding tool in parallel batch: ${fn}`);
+                        res = { success: false, error: "Akses ditolak. Fitur Coding Agent hanya tersedia di lingkungan pengembang Nayaxa." };
+                    } else {
+                        // 2. UI FEEDBACK (THOUGHT TRACE vs WIDGET)
+                        if (onStepCallback && TOOL_STEP_LABELS[fn]) {
+                            // On Agent (localhost): Show detailed dynamic labels
+                            if (coding_mode) {
+                                let dynLabel = TOOL_STEP_LABELS[fn].label;
+                                if (fn === 'read_code_file' && args.file_path) {
+                                    dynLabel = `Membaca file: ${args.file_path.split('\\').pop().split('/').pop()}`;
+                                } else if (fn === 'write_code_file' && args.file_path) {
+                                    dynLabel = `Menulis file: ${args.file_path.split('\\').pop().split('/').pop()}`;
+                                } else if (fn === 'list_project_files' && args.dir_path) {
+                                    dynLabel = `Menelusuri direktori: ${args.dir_path.split('\\').pop().split('/').pop()}`;
+                                } else if (fn === 'execute_database_update') {
+                                    dynLabel = `Menjalankan Update Database (DML/DDL)...`;
+                                }
+                                onStepCallback({ icon: TOOL_STEP_LABELS[fn].icon, label: dynLabel });
+                            } else {
+                                // On Widget: Only show generic label to keep it clean
+                                onStepCallback({ icon: TOOL_STEP_LABELS[fn].icon, label: TOOL_STEP_LABELS[fn].label });
+                            }
+                        }
+
+                        // 3. EXECUTION
+                        try {
+                            if (signal?.aborted) return { success: false, error: 'Aborted' };
+                            
+                            const excelFile = attachmentList.find(f => f.mimeType?.includes('spreadsheetml') || f.mimeType?.includes('excel') || f.mimeType?.includes('officedocument.spreadsheetml.sheet'));
+                            const excelBase64 = excelFile ? excelFile.base64 : null;
+                            res = await toolFunctions[fn]({ ...args, instansi_id, month, year }, { excelBase64, baseUrl, session_id: activeSessionId, signal });
+                            
+                            if (res.success && res.download_url) {
+                                generatedDocLinks.push({ url: res.download_url, name: args.filename || args.judul || "Dokumen" });
+                            }
+                        } catch (toolErr) {
+                            console.error(`[DeepSeek_Parallel_Error] ${fn}:`, toolErr);
+                            res = { success: false, error: `Tool ${fn} gagal dieksekusi: ${toolErr.message}` };
+                        }
+                    }
+
+                    // 4. CHART HANDLING
                     if (fn === 'generate_chart' && res.success) {
                         generatedChartMarkers.push(res.chart_marker);
                         res = { success: true, message: 'Chart ready.' };
                     }
-                    
-                    messages.push({ 
+
+                    return { 
                         role: "tool", 
                         tool_call_id: call.id, 
                         content: JSON.stringify(res) 
-                    });
-                }
+                    };
+                });
+
+                const results = await Promise.all(toolPromises);
+                messages.push(...results);
                 
                 response = await callDeepSeek(messages);
                 message = response.data.choices[0].message;
@@ -410,10 +668,23 @@ const nayaxaDeepSeekService = {
             // Remove DSML tags from final text if they leaked through
             text = text.replace(/< \| DSML \| [\s\S]*?>/g, '').replace(/<\/ \| DSML \| [\s\S]*?>/g, '').trim();
             
+            // --- AUTO-LINK INJECTION (v4.5.6) ---
+            if (generatedDocLinks.length > 0) {
+                let linkMarkdowns = "\n\n### 📄 File Hasil Generasi:\n";
+                generatedDocLinks.forEach(doc => {
+                    const linkText = `[Unduh ${doc.name}](${doc.url})`;
+                    if (!text.includes(doc.url)) {
+                        linkMarkdowns += `- ${linkText}\n`;
+                    }
+                });
+                if (linkMarkdowns.length > 30) text += linkMarkdowns;
+            }
+
             if (generatedChartMarkers.length > 0) text += "\n\n" + generatedChartMarkers.join("\n\n");
             return text;
         } catch (error) {
-            console.error('DeepSeek Error:', error.message);
+            console.error('DeepSeek API Error:', error.response?.data || error.message);
+            console.error('Full DeepSeek Error Context:', error);
             // Specific 429 (Rate Limit) Handling
             if (error.response?.status === 429 || error.message?.includes('429')) {
                 return "Maaf, Nayaxa sedang sibuk, silakan coba lagi.";

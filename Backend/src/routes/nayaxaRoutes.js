@@ -16,11 +16,17 @@ router.get('/history/:session_id', nayaxaController.getChatHistoryBySession);
 router.delete('/session/:session_id', nayaxaController.deleteChatSession);
 router.post('/session/:session_id/pin', nayaxaController.togglePinSession);
 router.post('/chat', nayaxaController.chat);
+router.post('/chat/stream', nayaxaController.chatStream); // SSE - Standalone only
 
 // Knowledge management
 router.get('/knowledge', nayaxaKnowledgeController.getAll);
 router.post('/knowledge', nayaxaKnowledgeController.create);
 router.put('/knowledge/:id', nayaxaKnowledgeController.update);
 router.delete('/knowledge/:id', nayaxaKnowledgeController.deleteKnowledge);
+
+// Proposals
+router.get('/proposals/:id', nayaxaController.getProposal);
+router.post('/proposals/:id/apply', nayaxaController.applyProposal);
+router.post('/proposals/:id/reject', nayaxaController.rejectProposal);
 
 module.exports = router;
