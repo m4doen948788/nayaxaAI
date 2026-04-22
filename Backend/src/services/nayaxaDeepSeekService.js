@@ -445,6 +445,14 @@ const nayaxaDeepSeekService = {
             PENTING - FORMAT JAWABAN:
             - ANDA WAJIB memberikan ringkasan teks atau penjelasan setelah menggunakan tool. DILARANG KERAS hanya memanggil tool tanpa memberikan respon teks sama sekali.
             - SELALU gunakan format Markdown (Heading, Bold, Bullet Points, dan Tabel Markdown) dalam setiap jawaban agar terlihat rapi, premium, dan profesional di aplikasi Dashboard.
+            - **CONTEXT ADHERENCE & HONESTY GUARDRAIL**:
+                1. PRIORITASKAN dokumen yang baru saja diunggah. Jika user mengirim file baru, fokuslah pada isi file tersebut meskipun topik sebelumnya berbeda.
+                2. JANGAN MEMAKSAKAN konteks lama jika tidak relevan dengan file baru yang dikirim.
+                3. JANGAN PERNAH MENGARANG (HALUSINASI). Jika isi file tidak mengandung jawaban yang dicari, sampaikan dengan jujur bahwa Anda tidak dapat menemukan informasi tersebut dalam dokumen yang tersedia.
+                4. DILARANG KERAS menyebutkan nama teknis otak Anda (seperti DeepSeek, Gemini, atau model AI lainnya) di dalam jawaban. Gunakan nama 'Nayaxa'.
+                5. JANGAN menuliskan query pencarian, nama fungsi, atau logika internal Anda ke dalam chat. Pencarian harus bersifat SILENT (Senyap).
+                6. DILARANG KERAS menghentikan jawaban di tengah kalimat. Setiap respon WAJIB diakhiri dengan kalimat penutup yang lengkap, sopan, dan jelas.
+            - Jika Anda melakukan pencarian internet (search_internet), sajikan hasilnya dalam narasi yang profesional, gunakan Tabel Markdown jika ada data perbandingan, dan berikan kesimpulan di akhir.
             - **DILARANG KERAS mengeluarkan output berupa kode SQL mentah (seperti SELECT, JOIN, atau WHERE) langsung ke dalam chat.** Kode SQL hanya boleh digunakan secara internal di dalam parameter fungsi 'execute_sql_query'. Anda harus menyajikan hasil eksekusinya dalam bentuk Tabel Markdown.
             - DILARANG KERAS mengeluarkan output berupa JSON mentah atau blok kode data mentah langsung ke dalam chat. 
             - Jika Anda ingin menampilkan data terstruktur (seperti Lembar Kerja atau List), gunakan Tabel Markdown atau List bertingkat.
@@ -597,14 +605,14 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                         const pdfData = await pdf(buffer);
                         const extractedText = pdfData.text?.trim() || '';
 
-                        if (extractedText.length < 80) {
+                        if (extractedText.length < 150) {
                             console.warn(`[DeepSeek] PDF text too short (${extractedText.length} chars) - likely a scanned PDF.`);
                             fileContext = (fileContext ? fileContext + '\n\n' : '') + 
-                                `DATA FILE (PDF - PERINGATAN) - NAMA FILE: "${fileName}":\nFile PDF ini tidak dapat dibaca secara teks. Kemungkinan besar file ini adalah dokumen hasil scan (gambar) atau PDF yang dilindungi. Konten teks tidak tersedia. JANGAN MENGARANG atau MENGASUMSIKAN isi dokumen ini.`;
+                                `DATA FILE (PDF - TERPROTEKSI/SCAN) - NAMA FILE: "${fileName}":\nNayaxa tidak dapat membaca teks dari file ini. Kemungkinan besar file ini adalah hasil scan (gambar) atau PDF yang diproteksi. Mohon gunakan file PDF teks asli atau ringkas informasi pentingnya secara manual.`;
                         } else {
-                            const MAX_PDF_CHARS = 60000;
+                            const MAX_PDF_CHARS = 150000; // Increased to ~50-60 pages
                             const truncated = extractedText.length > MAX_PDF_CHARS;
-                            const finalText = truncated ? extractedText.slice(0, MAX_PDF_CHARS) + '\n\n[...Dokumen terpotong karena terlalu panjang...]' : extractedText;
+                            const finalText = truncated ? extractedText.slice(0, MAX_PDF_CHARS) + '\n\n[...Dokumen terpotong karena terlalu panjang, mohon tanya bagian spesifik jika perlu...]' : extractedText;
                             console.log(`[DeepSeek] PDF extracted: ${extractedText.length} chars${truncated ? ' (truncated)' : ''}`);
                             fileContext = (fileContext ? fileContext + '\n\n' : '') + `DATA FILE (PDF) - NAMA FILE: "${fileName}":\n${finalText}`;
                         }
@@ -683,6 +691,7 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
 
             const processStream = (stream) => new Promise((resolve, reject) => {
                 let currentMessageContent = "";
+                let finishReason = null;
                 let buffer = ""; // Line buffer for fragmented chunks
 
                 stream.on('data', chunk => {
@@ -726,6 +735,10 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                                         }
                                     });
                                 }
+                                // 4. Handle Finish Reason
+                                if (data.choices[0]?.finish_reason) {
+                                    finishReason = data.choices[0].finish_reason;
+                                }
                             } catch (e) {
                                 // Log the error but don't crash the entire request
                                 console.error('[DeepSeek_Stream_Parse_Error] Partial or invalid JSON:', trimmedLine);
@@ -743,14 +756,16 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                             if (content) currentMessageContent += content;
                         } catch (e) {}
                     }
-                    resolve(currentMessageContent);
+                    resolve({ content: currentMessageContent, finish_reason: finishReason });
                 });
                 stream.on('error', err => reject(err));
             });
 
             // --- INITIAL CALL ---
             const initialStream = await callDeepSeekStream(messages);
-            let messageContent = await processStream(initialStream.data);
+            const initialRes = await processStream(initialStream.data);
+            let messageContent = initialRes.content;
+            let lastFinishReason = initialRes.finish_reason;
             
             let loop = 0;
             const MAX_LOOPS = 20;
@@ -758,91 +773,99 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
             while (loop < MAX_LOOPS) {
                 if (signal?.aborted) break;
                 
-                // Only proceed if there are pending tool calls
                 const combinedToolCalls = toolCalls.filter(tc => tc && tc.function.name);
-                if (combinedToolCalls.length === 0) break;
+                
+                // EXIT CONDITION: No more tools AND no truncation
+                if (combinedToolCalls.length === 0 && lastFinishReason !== 'length') break;
 
                 loop++;
 
-                // Push Assistant's tool calls to messages
-                messages.push({
-                    role: "assistant",
-                    content: messageContent || null,
-                    tool_calls: combinedToolCalls.map(tc => ({
-                        id: tc.id,
-                        type: "function",
-                        function: {
-                            name: tc.function.name,
-                            arguments: tc.function.arguments
-                        }
-                    }))
-                });
-
-                // --- PARALLEL TURBO EXECUTION ---
-                const toolPromises = combinedToolCalls.map(async (call) => {
-                    const fn = call.function.name;
-                    let args;
-                    try {
-                        args = typeof call.function.arguments === 'string' ? JSON.parse(call.function.arguments) : call.function.arguments;
-                    } catch (e) { args = {}; }
-
-                    let res;
-                    const isCodingTool = ['list_project_files', 'read_code_file', 'write_code_file', 'search_in_codebase', 'execute_database_update'].includes(fn);
-
-                    try {
-                        if (signal?.aborted) return { success: false, error: 'Aborted' };
-
-                        // UI Feedback
-                        if (onStepCallback) {
-                            if (fn === 'generate_document') {
-                                const ext = (args.format || 'DOC').toUpperCase();
-                                onStepCallback({ icon: '📝', label: `Sedang membuat file (${ext})...` });
-                            } else if (fn === 'pembangkit_paparan_pptx') {
-                                onStepCallback({ icon: '📊', label: 'Sedang membuat file (PPTX)...' });
-                            } else if (TOOL_STEP_LABELS[fn]) {
-                                onStepCallback({ icon: TOOL_STEP_LABELS[fn].icon, label: TOOL_STEP_LABELS[fn].label });
-                            } else {
-                                onStepCallback({ icon: isCodingTool ? '💻' : '⚡', label: `Nayaxa menggunakan: ${fn}` });
+                // If truncated, we just push the current content as assistant message and continue
+                // If tool calls, we push tools
+                if (combinedToolCalls.length > 0) {
+                    messages.push({
+                        role: "assistant",
+                        content: messageContent || null,
+                        tool_calls: combinedToolCalls.map(tc => ({
+                            id: tc.id,
+                            type: "function",
+                            function: {
+                                name: tc.function.name,
+                                arguments: tc.function.arguments
                             }
+                        }))
+                    });
+
+                    // --- PARALLEL TURBO EXECUTION ---
+                    const toolPromises = combinedToolCalls.map(async (call) => {
+                        const fn = call.function.name;
+                        let args;
+                        try {
+                            args = typeof call.function.arguments === 'string' ? JSON.parse(call.function.arguments) : call.function.arguments;
+                        } catch (e) { args = {}; }
+
+                        let res;
+                        const isCodingTool = ['list_project_files', 'read_code_file', 'write_code_file', 'search_in_codebase', 'execute_database_update'].includes(fn);
+
+                        try {
+                            if (signal?.aborted) return { success: false, error: 'Aborted' };
+
+                            // UI Feedback
+                            if (onStepCallback) {
+                                if (fn === 'generate_document') {
+                                    const ext = (args.format || 'DOC').toUpperCase();
+                                    onStepCallback({ icon: '📝', label: `Sedang membuat file (${ext})...` });
+                                } else if (fn === 'pembangkit_paparan_pptx') {
+                                    onStepCallback({ icon: '📊', label: 'Sedang membuat file (PPTX)...' });
+                                } else if (TOOL_STEP_LABELS[fn]) {
+                                    onStepCallback({ icon: TOOL_STEP_LABELS[fn].icon, label: TOOL_STEP_LABELS[fn].label });
+                                } else {
+                                    onStepCallback({ icon: isCodingTool ? '💻' : '⚡', label: `Nayaxa menggunakan: ${fn}` });
+                                }
+                            }
+                            
+                            const excelFile = attachmentList.find(f => f.mimeType?.includes('spreadsheetml') || f.mimeType?.includes('excel') || f.mimeType?.includes('officedocument.spreadsheetml.sheet'));
+                            const excelBase64 = excelFile ? excelFile.base64 : null;
+                            res = await toolFunctions[fn]({ ...args, instansi_id, month, year }, { excelBase64, baseUrl, session_id, signal });
+                            
+                            if (res.success && res.download_url) {
+                                generatedDocLinks.push({ url: res.download_url, name: args.filename || args.judul || "Dokumen" });
+                            }
+                        } catch (toolErr) {
+                            console.error(`[DeepSeek_Parallel_Error] ${fn}:`, toolErr);
+                            res = { success: false, error: `Tool ${fn} gagal dieksekusi: ${toolErr.message}` };
                         }
-                        
-                        const excelFile = attachmentList.find(f => f.mimeType?.includes('spreadsheetml') || f.mimeType?.includes('excel') || f.mimeType?.includes('officedocument.spreadsheetml.sheet'));
-                        const excelBase64 = excelFile ? excelFile.base64 : null;
-                        res = await toolFunctions[fn]({ ...args, instansi_id, month, year }, { excelBase64, baseUrl, session_id, signal });
-                        
-                        if (res.success && res.download_url) {
-                            generatedDocLinks.push({ url: res.download_url, name: args.filename || args.judul || "Dokumen" });
+
+                        if (fn === 'generate_chart' && res.success) {
+                            generatedChartMarkers.push(res.chart_marker);
+                            res = { success: true, message: 'Chart ready.' };
                         }
-                    } catch (toolErr) {
-                        console.error(`[DeepSeek_Parallel_Error] ${fn}:`, toolErr);
-                        res = { success: false, error: `Tool ${fn} gagal dieksekusi: ${toolErr.message}` };
-                    }
 
-                    if (fn === 'generate_chart' && res.success) {
-                        generatedChartMarkers.push(res.chart_marker);
-                        res = { success: true, message: 'Chart ready.' };
-                    }
+                        return { 
+                            role: "tool", 
+                            tool_call_id: call.id, 
+                            content: JSON.stringify(res) 
+                        };
+                    });
 
-                    return { 
-                        role: "tool", 
-                        tool_call_id: call.id, 
-                        content: JSON.stringify(res) 
-                    };
-                });
-
-                const results = await Promise.all(toolPromises);
-                messages.push(...results);
-                
-                // CRITICAL: Reset toolCalls for the next turn
-                toolCalls = []; 
+                    const results = await Promise.all(toolPromises);
+                    messages.push(...results);
+                    toolCalls = []; 
+                } else if (lastFinishReason === 'length') {
+                    // AUTO-RESUME: Model cut off mid-sentence
+                    if (onStepCallback) onStepCallback({ icon: '🔄', label: 'Menyambung jawaban...' });
+                    messages.push({ role: "assistant", content: messageContent });
+                }
                 
                 // Start next turn with streaming
-                const nextStream = await callDeepSeekStream(messages, true);
-                const turnContent = await processStream(nextStream.data);
+                const nextStream = await callDeepSeekStream(messages, combinedToolCalls.length === 0);
+                const nextRes = await processStream(nextStream.data);
+                const turnContent = nextRes.content;
+                lastFinishReason = nextRes.finish_reason;
                 
                 // Append the content from this turn
                 if (turnContent) {
-                    messageContent += (messageContent ? '\n' : '') + turnContent;
+                    messageContent += (messageContent ? '' : '') + turnContent; // No extra newline for mid-sentence resume
                 }
             }
 

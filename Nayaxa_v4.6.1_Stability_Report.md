@@ -20,9 +20,10 @@ Nayaxa v4.6.1 memperkenalkan kontrol presisi untuk setiap dokumen yang diunggah.
 *   Saat di-paste ke **MS Word** atau **Excel**, tabel akan tetap rapi dengan border, warna header, dan padding yang sesuai.
 
 ### C. Intelligence Logic & Brain Selection
-Nayaxa menggunakan sistem multi-brain yang adaptif:
-*   **DeepSeek (V3/R1):** Otak Utama (Default). Digunakan untuk analisis dokumen mendalam, penulisan draf formal, pemrograman (Coding Mode), dan tugas yang membutuhkan logika berjenjang.
-*   **Gemini (1.5 Pro/Flash):** Otak Pendukung & Multimodal. Digunakan untuk salam proaktif (Awakening), analisis gambar/visual, serta sebagai *fallback* jika DeepSeek mengalami antrean panjang.
+Nayaxa menggunakan sistem multi-brain yang adaptif (Anonymized UI):
+*   **Otak Utama:** Digunakan untuk analisis dokumen mendalam, penulisan draf formal, dan logika berjenjang.
+*   **Otak Cadangan:** Digunakan untuk salam proaktif, analisis visual, dan jalur alternatif jika sistem utama sibuk.
+*   **Anonymity:** Nama teknis seperti "DeepSeek" atau "Gemini" telah dihapus dari antarmuka pengguna untuk menjaga estetika premium.
 
 ### D. Fact-Based Research Protocol (2024-2029)
 Protokol pencarian data pejabat dan politik untuk periode 2024-2029:
@@ -30,7 +31,18 @@ Protokol pencarian data pejabat dan politik untuk periode 2024-2029:
 *   **Akurasi Kabinet:** Nayaxa sudah dibekali data Kabinet Merah Putih (2024-2029) untuk mencegah halusinasi data lama.
 *   **Transparency Footer:** Setiap riset data publik menyertakan catatan validasi fakta di bagian bawah jawaban.
 
-### E. UX & Auto-Scroll Optimasi
+### E. Native Stability Hardening (v4.6.1)
+Fitur untuk menjamin koneksi tidak terputus, setara dengan aplikasi asli:
+*   **Keep-Alive Heartbeat:** Server mengirimkan sinyal "detak jantung" setiap 5 detik selama proses pencarian data untuk mencegah pemutusan koneksi oleh jaringan/proxy.
+*   **Auto-Resume Logic:** Jika AI berhenti karena batasan panjang teks (*token limit*), Nayaxa akan otomatis menyambung jawaban tersebut tanpa perlu diminta.
+*   **Infinite Timeout:** Socket timeout dinonaktifkan khusus untuk sesi chat aktif agar riset kompleks tidak terhenti di tengah jalan.
+
+### F. Context & Honesty Guardrail (v4.6.1)
+*   **File Priority:** Nayaxa wajib memprioritaskan dokumen yang baru saja diunggah. Jika topik berubah, Nayaxa harus meninggalkan konteks lama.
+*   **Anti-Hallucination:** Jika informasi tidak ditemukan dalam file, Nayaxa dilarang mengarang dan wajib menyatakan tidak bisa menjawab secara jujur.
+*   **Silent Search:** Seluruh proses pencarian internal (query) disembunyikan dari layar chat agar tampilan tetap bersih.
+
+### G. UX & Auto-Scroll Optimasi
 *   **Streaming Scroll:** Jendela chat otomatis mengikuti teks ke bawah selama Nayaxa mengetik.
 *   **Focus Guard:** Dropdown file tidak akan menutup sendiri saat diklik (Masalah auto-focus sudah diperbaiki).
 *   **Preview Stability:** Chat tidak akan tertutup/minimize otomatis setelah Anda menutup jendela pratinjau dokumen.

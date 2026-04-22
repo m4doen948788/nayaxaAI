@@ -422,7 +422,16 @@ const nayaxaController = {
                 if (data.type === 'thought') {
                     sendEvent('thought', { text: data.text });
                 } else if (data.type === 'message_chunk') {
-                    sendEvent('message', { text: data.text });
+                    // --- REAL-TIME STREAMING FILTER ---
+                    // Strip technical leaks immediately before sending to frontend
+                    let chunk = data.text;
+                    if (chunk.includes('<') || chunk.includes('|') || chunk.includes('DSML')) {
+                        chunk = chunk.replace(/<\|[\s\S]*?\|>/g, '')
+                                     .replace(/<[\s\S]*?DSML[\s\S]*?>/gi, '')
+                                     .replace(/<[\s\S]*?invoke[\s\S]*?>/gi, '')
+                                     .replace(/<[\s\S]*?function_calls[\s\S]*?>/gi, '');
+                    }
+                    if (chunk) sendEvent('message', { text: chunk });
                 } else {
                     sendEvent('step', data);
                 }
@@ -431,7 +440,19 @@ const nayaxaController = {
             const abortController = new AbortController();
             const { signal } = abortController;
 
+            // --- NATIVE STABILITY HARDENING ---
+            req.socket.setKeepAlive(true);
+            req.socket.setTimeout(0); // Disable timeout for long-running streams
+            
+            const heartbeatInterval = setInterval(() => {
+                if (!res.writableEnded) {
+                    // Send a formal event to be more active than just a comment
+                    sendEvent('heartbeat', { alive: true, timestamp: Date.now() });
+                }
+            }, 5000);
+
             req.on('close', () => {
+                clearInterval(heartbeatInterval);
                 if (!res.writableEnded) {
                     console.log(`[SSE] Client disconnected for session: ${activeSessionId}`);
                     abortController.abort();
@@ -480,7 +501,7 @@ const nayaxaController = {
                 
                 if (brainUsed === 'DeepSeek') {
                     brainUsed = 'Gemini (Fallback)';
-                    sendEvent('step', { icon: '🔄', label: 'DeepSeek sedang sibuk, beralih ke pencadangan...' });
+                    sendEvent('step', { icon: '🔄', label: 'Menyiapkan otak cadangan untuk analisis...' });
                     responseText = await nayaxaGemini.chatWithNayaxa(
                         message, attachmentList, instansi_id, month, year, history, user_name, profil_id,
                         blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet,
@@ -490,7 +511,7 @@ const nayaxaController = {
                     // Gemini failed, try DeepSeek if no images
                     if (!hasImages && isDeepSeekEnabled) {
                         brainUsed = 'DeepSeek (Fallback)';
-                        sendEvent('step', { icon: '🔄', label: 'Gemini sedang sibuk, beralih ke pencadangan...' });
+                        sendEvent('step', { icon: '🔄', label: 'Sedang mencari rute alternatif...' });
                         responseText = await nayaxaDeepSeek.chatWithNayaxa(
                             message, [], instansi_id, month, year, history, user_name, profil_id,
                             blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet,
@@ -531,6 +552,7 @@ const nayaxaController = {
             sendEvent('error', { message: error.message || 'Terjadi kesalahan pada Nayaxa.' });
             res.end();
         } finally {
+            if (typeof heartbeatInterval !== 'undefined') clearInterval(heartbeatInterval);
             releaseRequest();
         }
     },
