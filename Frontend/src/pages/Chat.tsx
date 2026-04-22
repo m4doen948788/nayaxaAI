@@ -183,7 +183,7 @@ export default function Chat() {
     // Combine file actions into instructions
     let fileInstructions = "";
     selectedFiles.forEach(f => {
-      if (f.action && f.action !== 'Bahan Analisis') {
+      if (f.action && f.action !== 'Analisis') {
         fileInstructions += `[FILE: ${f.name} -> ACTION: ${f.action}]\n`;
       }
     });
@@ -250,7 +250,13 @@ export default function Chat() {
         console.log('Chat stream aborted by user.');
       } else {
         console.error(err);
-        setMessages(prev => [...prev, { role: 'model', content: 'Gagal terhubung ke Nayaxa AI Engine.' }]);
+        let errorMsg = err.message || '';
+        if (errorMsg.includes('503') || errorMsg.includes('high demand') || errorMsg.includes('Service Unavailable') || errorMsg.includes('GoogleGenerativeAI')) {
+          errorMsg = "Nayaxa sedang sibuk, silakan coba beberapa saat lagi.";
+        } else {
+          errorMsg = "Gagal terhubung ke Nayaxa AI Engine.";
+        }
+        setMessages(prev => [...prev, { role: 'model', content: errorMsg }]);
       }
     } finally {
       setIsTyping(false);
