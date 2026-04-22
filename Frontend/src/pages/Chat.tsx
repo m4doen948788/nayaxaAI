@@ -183,7 +183,7 @@ export default function Chat() {
     // Combine file actions into instructions
     let fileInstructions = "";
     selectedFiles.forEach(f => {
-      if (f.action && f.action !== 'Analisis') {
+      if (f.action) {
         fileInstructions += `[FILE: ${f.name} -> ACTION: ${f.action}]\n`;
       }
     });
