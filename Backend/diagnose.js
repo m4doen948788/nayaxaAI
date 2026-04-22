@@ -42,22 +42,21 @@ async function runDiagnosis() {
     console.log('\n3. Memeriksa Gemini (Otak Cadangan)...');
     try {
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        // Menggunakan model 2.5 Flash sesuai temuan kita tadi
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
         const result = await model.generateContent('Hi');
-        console.log('   ✅ Gemini Aktif & Merespon.');
+        console.log('   ✅ Gemini 2.5 Aktif & Merespon.');
     } catch (err) {
-        if (err.message.includes('API_KEY_INVALID') || err.message.includes('leaked')) {
-            console.log('   ⚠️ WARNING: API KEY GEMINI BOCOR/DIBLOKIR!');
-        } else {
-            console.log('   ❌ Gemini Error: ' + err.message);
-        }
+        console.log('   ❌ Gemini Error: ' + err.message);
     }
 
     // 4. Check PDF Library
     console.log('\n4. Memeriksa Library PDF...');
     try {
         const dummyBuffer = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Title (Test) >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF');
-        await pdf(dummyBuffer);
+        // Cara panggil yang lebih robust
+        const pdfParser = require('pdf-parse');
+        await pdfParser(dummyBuffer);
         console.log('   ✅ Library PDF (pdf-parse) Berjalan Baik.');
     } catch (err) {
         console.log('   ❌ PDF Library Error: ' + err.message);
