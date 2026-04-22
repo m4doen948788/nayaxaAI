@@ -54,9 +54,16 @@ async function runDiagnosis() {
     console.log('\n4. Memeriksa Library PDF...');
     try {
         const dummyBuffer = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Title (Test) >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF');
-        // Cara panggil yang lebih robust
+        
+        // Penyesuaian untuk pdf-parse v2.4.5
         const pdfParser = require('pdf-parse');
-        await pdfParser(dummyBuffer);
+        const parseFunction = typeof pdfParser === 'function' ? pdfParser : pdfParser.default;
+        
+        if (typeof parseFunction !== 'function') {
+            throw new Error('Library pdf-parse terinstall tapi tidak bisa dipanggil sebagai fungsi.');
+        }
+
+        await parseFunction(dummyBuffer);
         console.log('   ✅ Library PDF (pdf-parse) Berjalan Baik.');
     } catch (err) {
         console.log('   ❌ PDF Library Error: ' + err.message);
