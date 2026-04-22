@@ -34,15 +34,11 @@ class PptxService {
         // --- 1. SLIDE COVER (Modern Deep Gradient) ---
         let slideCover = pptx.addSlide();
         slideCover.background = { 
-            fill: { 
-                type: "gradient", 
-                type: "linear", 
-                angle: 135,
-                colorSteps: [
-                    { color: this.colors.INDIGO_GRADIENT_START, offset: 0 },
-                    { color: this.colors.INDIGO_GRADIENT_END, offset: 100 }
-                ]
-            } 
+            type: "gradient", 
+            colorSteps: [
+                { color: this.colors.INDIGO_GRADIENT_START, offset: 0 },
+                { color: this.colors.INDIGO_GRADIENT_END, offset: 100 }
+            ]
         };
         
         slideCover.addShape(pptx.ShapeType.ellipse, {
@@ -113,7 +109,6 @@ class PptxService {
         });
 
         // --- 3. SAVE AND RETURN ---
-        // Create sanitized filename from Title
         const safeTitle = (data.judul || "Paparan_Nayaxa")
             .replace(/[^a-z0-9]/gi, '_')
             .substring(0, 50);
