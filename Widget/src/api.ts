@@ -22,5 +22,42 @@ export const createNayaxaApi = (baseUrl: string, apiKey: string) => {
       instance.delete(`/session/${sessionId}`).then(r => r.data),
     chat: (data: any) => 
       instance.post('/chat', data).then(r => r.data),
+    chatStream: (data: any, onMessage: (event: string, data: any) => void) => {
+      const controller = new AbortController();
+      fetch(`${baseUrl}/chatStream`, {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data),
+        signal: controller.signal
+      }).then(response => {
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        
+        let buffer = ""; 
+        function read() {
+          reader?.read().then(({ done, value }) => {
+            if (done) return;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || "";
+
+            lines.forEach(line => {
+              if (line.startsWith('data: ')) {
+                try {
+                  const payload = JSON.parse(line.substring(6));
+                  onMessage(payload.event || 'message', payload.data);
+                } catch (e) {}
+              }
+            });
+            read();
+          });
+        }
+        read();
+      });
+      return () => controller.abort();
+    }
   };
 };

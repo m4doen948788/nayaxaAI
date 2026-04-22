@@ -221,6 +221,7 @@ const exportService = {
                         
                         tableRows.push(new TableRow({
                             children: cells.map(cell => new TableCell({
+                                width: { size: 100 / cells.length, type: WidthType.PERCENTAGE },
                                 children: [new Paragraph({ 
                                     children: processTextRuns(cell.trim(), isHeader, isHeader ? docxFontSize : docxFontSize - 2),
                                     alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
@@ -245,6 +246,7 @@ const exportService = {
                 children.push(new Table({
                     rows: tableRows,
                     width: { size: 100, type: WidthType.PERCENTAGE },
+                    alignment: AlignmentType.CENTER,
                     borders: {
                         top: { style: BorderStyle.SINGLE, size: 2, color: "4f46e5" },
                         bottom: { style: BorderStyle.SINGLE, size: 2, color: "4f46e5" },

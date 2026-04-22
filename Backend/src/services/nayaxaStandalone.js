@@ -12,6 +12,13 @@ const applyInstansiFilter = (alias, instansi_id) => {
     return instansi_id ? `${prefix}instansi_id = ?` : '1=1';
 };
 
+// --- IN-MEMORY CACHE for Speed Optimization ---
+const _nayaxaCache = {
+    schema: { data: null, ts: 0 },
+    glossary: { data: null, ts: 0 },
+    ttl: 3600 * 1000 // 1 hour
+};
+
 const nayaxaStandalone = {
     getPersonalStatistics: async (profil_id, month, year) => {
         try {
@@ -214,7 +221,53 @@ const nayaxaStandalone = {
         } catch (error) { throw error; }
     },
 
+    getPegawaiRanking: async (instansi_id, month, year, limit = 5) => {
+        try {
+            // Re-use calculateScoring logic to get rankings
+            const res = await nayaxaStandalone.calculateScoring(instansi_id, month, year);
+            return {
+                top_performer: res.top_pegawai.slice(0, limit),
+                bottom_performer: res.bottom_pegawai.slice(0, limit),
+                bidang_ranking: res.ranked_bidang
+            };
+        } catch (error) {
+            console.error('Error in getPegawaiRanking:', error);
+            throw error;
+        }
+    },
+
+    searchPegawai: async (query, instansi_id) => {
+        try {
+            const filterClauseEmpty = applyInstansiFilter('', instansi_id);
+            const params = instansi_id ? [`%${query}%`, `%${query}%`, instansi_id] : [`%${query}%`, `%${query}%`];
+            
+            const [rows] = await pool.query(`
+                SELECT 
+                    p.id, p.nama_lengkap, p.nip, p.is_active,
+                    b.nama_bidang as bidang,
+                    j.jabatan,
+                    i.instansi as nama_instansi
+                FROM profil_pegawai p
+                LEFT JOIN master_bidang_instansi b ON p.bidang_id = b.id
+                LEFT JOIN master_jabatan j ON p.jabatan_id = j.id
+                LEFT JOIN master_instansi_daerah i ON p.instansi_id = i.id
+                WHERE (p.nama_lengkap LIKE ? OR p.nip LIKE ?) 
+                AND ${filterClauseEmpty}
+                ORDER BY p.nama_lengkap ASC
+                LIMIT 50
+            `, params);
+            return rows;
+        } catch (error) {
+            console.error('Error in searchPegawai:', error);
+            throw error;
+        }
+    },
+
     getDatabaseSchema: async () => {
+        const now = Date.now();
+        if (_nayaxaCache.schema.data && (now - _nayaxaCache.schema.ts < _nayaxaCache.ttl)) {
+            return _nayaxaCache.schema.data;
+        }
         try {
             const [rows] = await pool.query(`SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME, ORDINAL_POSITION`);
             const schemaMap = {};
@@ -224,16 +277,36 @@ const nayaxaStandalone = {
             });
             let s = "PETA DATABASE DASHBOARD:\n";
             for (const t in schemaMap) s += `Tabel: ${t} (Kolom: ${schemaMap[t].join(', ')})\n`;
+            
+            _nayaxaCache.schema.data = s;
+            _nayaxaCache.schema.ts = now;
             return s;
         } catch (error) { return "Error skema."; }
     },
 
     getMasterDataGlossary: async () => {
+        const now = Date.now();
+        if (_nayaxaCache.glossary.data && (now - _nayaxaCache.glossary.ts < _nayaxaCache.ttl)) {
+            return _nayaxaCache.glossary.data;
+        }
         try {
-            const [bidang] = await pool.query('SELECT nama_bidang, singkatan FROM master_bidang_instansi LIMIT 50');
-            const [instansi] = await pool.query('SELECT instansi, singkatan FROM master_instansi_daerah LIMIT 50');
-            return `GLOSARIUM:\n- Instansi: ${instansi.map(i => i.instansi).join(', ')}\n- Bidang: ${bidang.map(b => b.nama_bidang).join(', ')}`;
-        } catch (error) { return ""; }
+            const [bidang] = await pool.query('SELECT nama_bidang, singkatan FROM master_bidang_instansi');
+            const [instansi] = await pool.query('SELECT instansi, singkatan FROM master_instansi_daerah');
+            const [tipe] = await pool.query('SELECT kode, nama FROM master_tipe_kegiatan');
+            
+            const glossaryBidang = bidang.map(b => b.singkatan ? `${b.nama_bidang} (${b.singkatan})` : b.nama_bidang).join(', ');
+            const glossaryInstansi = instansi.map(i => i.singkatan ? `${i.instansi} (${i.singkatan})` : i.instansi).join(', ');
+            const glossaryTipe = tipe.map(t => `${t.kode} (${t.nama})`).join(', ');
+            
+            const s = `GLOSARIUM RESMI:\n- DAFTAR INSTANSI: ${glossaryInstansi}\n- DAFTAR BIDANG: ${glossaryBidang}\n- DEFINISI KODE KEGIATAN: ${glossaryTipe}`;
+            
+            _nayaxaCache.glossary.data = s;
+            _nayaxaCache.glossary.ts = now;
+            return s;
+        } catch (error) { 
+            console.error('Error fetching glossary:', error);
+            return "GLOSARIUM: [Data tidak tersedia]"; 
+        }
     },
 
     getInstansiName: async (instansi_id) => {
@@ -250,7 +323,7 @@ const nayaxaStandalone = {
         }
     },
 
-    getPegawaiProfile: async (profil_id) => {
+    getPegawaiProfile: async (profil_id, user_name = null) => {
         try {
             if (!profil_id) return null;
             // 1. Fetch Basic Profile
@@ -268,7 +341,31 @@ const nayaxaStandalone = {
                 LIMIT 1
             `, [profil_id]);
             
-            if (rows.length === 0) return null;
+            if (rows.length === 0) {
+                // 2. SMART FALLBACK: If ID lookup fails, try matching by Nama Lengkap (if provided)
+                if (user_name) {
+                    console.log(`[Nayaxa] Profile ID ${profil_id} not found. Attempting Smart Lookup for: ${user_name}`);
+                    const [nameRows] = await pool.query(`
+                        SELECT 
+                            p.id, p.nama_lengkap, p.nip, p.bidang_id,
+                            b.nama_bidang as bidang, 
+                            j.jabatan,
+                            i.instansi as nama_instansi
+                        FROM profil_pegawai p
+                        LEFT JOIN master_bidang_instansi b ON p.bidang_id = b.id
+                        LEFT JOIN master_jabatan j ON p.jabatan_id = j.id
+                        LEFT JOIN master_instansi_daerah i ON p.instansi_id = i.id
+                        WHERE p.nama_lengkap LIKE ?
+                        LIMIT 1
+                    `, [`%${user_name}%`]);
+                    
+                    if (nameRows.length > 0) {
+                        console.log(`[Nayaxa] Smart Lookup SUCCESS: Found profile for ${user_name}`);
+                        return nameRows[0];
+                    }
+                }
+                return null;
+            }
             const profile = rows[0];
 
             // 2. Fetch Managed Instances (Pengampuan)
@@ -666,8 +763,8 @@ const nayaxaStandalone = {
 
             // QUERY AUGMENTATION
             const currentYear = new Date().getFullYear();
-            const latestRegionalPeriodStart = currentYear <= 2026 ? 2025 : Math.floor((currentYear - 2025) / 5) * 5 + 2025;
-            const latestRegionalPeriod = `${latestRegionalPeriodStart}-${latestRegionalPeriodStart + 5}`;
+            const latestRegionalPeriodStart = currentYear <= 2026 ? 2025 : Math.floor((currentYear - 2025) / 4) * 4 + 2025;
+            const latestRegionalPeriod = `${latestRegionalPeriodStart}-${latestRegionalPeriodStart + 4}`;
             
             let cleanQuery = query.replace(/cari di internet|search for|siapakah|jelaskan tentang|mencari|siapa itu/gi, '').trim();
             const isHeavyQuery = /bupati|walikota|gubernur|wali kota|kepala daerah|pejabat|pelantikan|presiden|menteri|pilkada|pilwalkot|pilgub|kpu/i.test(cleanQuery);
@@ -676,8 +773,19 @@ const nayaxaStandalone = {
             let queriesToTry = [cleanQuery];
             if (isHeavyQuery) {
                 let rewritten = cleanQuery.replace(/^siapa\s+/i, '').replace(/\bsekarang\b|\bsaat ini\b/gi, '').trim();
-                queriesToTry.unshift(`Pelantikan serentak ${rewritten} 2025`); 
-                queriesToTry.push(`${rewritten} periode ${latestRegionalPeriod}`);
+                const isMinister = /menteri/i.test(rewritten);
+                const currentMonth = new Date().toLocaleString('id-ID', { month: 'long' });
+                const currentYear = new Date().getFullYear();
+
+                if (isMinister) {
+                    queriesToTry.unshift(`${rewritten} Kabinet Merah Putih terbaru`);
+                    queriesToTry.push(`Siapa ${rewritten} reshuffle ${currentYear}`);
+                    queriesToTry.push(`${rewritten} Prabowo ${currentMonth} ${currentYear}`);
+                } else {
+                    queriesToTry.unshift(`Pelantikan serentak ${rewritten} 2024 2025`); 
+                    queriesToTry.push(`${rewritten} periode ${latestRegionalPeriod}`);
+                    queriesToTry.push(`${rewritten} terbaru ${currentMonth} ${currentYear}`);
+                }
             } else if (isResearchIntent) {
                 // Add research focus for scientific topics
                 queriesToTry.unshift(`${cleanQuery} jurnal ilmiah resmi`);
@@ -724,8 +832,9 @@ const nayaxaStandalone = {
             const TRUSTED_DOMAINS = [
                 // Science & Research (Global & National)
                 { pattern: /nature\.com|science\.org|sciencemag\.org|nasa\.gov|esa\.int|pubmed\.ncbi\.nlm\.nih\.gov|sciencedirect\.com|arxiv\.org|jstor\.org|cell\.com|thelancet\.com|pnas\.org|nejm\.org|scholar\.google\.com|researchgate\.net|brin\.go\.id|sinta\.kemdikbud\.go\.id|garuda\.kemdikbud\.go\.id|lipi\.go\.id|ristekdikti\.go\.id|\.edu|\.ac\.id/, score: 150, type: 'RESEARCH' },
-                // Government & Official
-                { pattern: /pilkada2024\.kpu\.go\.id/, score: 120, type: 'OFFICIAL' },
+                // Government & Official (Absolute Priority)
+                { pattern: /pilkada2024\.kpu\.go\.id|infopemilu\.kpu\.go\.id/, score: 300, type: 'OFFICIAL' },
+                { pattern: /kemendagri\.go\.id|setneg\.go\.id|kominfo\.go\.id/, score: 250, type: 'OFFICIAL' },
                 { pattern: /\.go\.id/, score: 110, type: 'OFFICIAL' },
                 // News Media
                 { pattern: /detik\.com|kompas\.com|cnnindonesia\.com|tempo\.co|antara\.news|antaranews\.com|liputan6\.com|tribunnews\.com|republika\.co\.id|jawapos\.com/, score: 80, type: 'NEWS' },
@@ -761,10 +870,23 @@ const nayaxaStandalone = {
                 const text = (res.title + ' ' + res.snippet).toLowerCase();
                 // Research keyword detection
                 if (/abstrak|metodologi|kesimpulan|hasil penelitian|riset|jurnal|ilmiah|biologi|antariksa|angkasa|astronomi|sains|penemuan terbaru|studi kasus|eksperimen/i.test(text)) score += 30;
+                
+                // Identity Boosting (Hardening v4.8.0)
+                if (/sjafrie sjamsoeddin|budi gunadi sadikin|prabowo subianto presiden|sugiono menteri/i.test(text)) score += 120;
+                if (/kabinet merah putih/i.test(text)) score += 100;
+
                 // Timeline detection (preserved)
-                if (text.includes('2025-2030') || text.includes('2025')) score += 100;
+                if (text.includes('2025-2029') || text.includes('2025')) score += 150;
                 if (text.includes('pelantikan') || text.includes('terpilih')) score += 50;
-                if (/penjabat|pj\.|plt\.|pjs\.|pelaksana tugas/i.test(text)) score -= 100;
+                
+                // Recency Penalty (Hardening v4.6.1)
+                // If query is for 'current' but result mentions old years, penalize heavily.
+                const oldYears = /\b(2018|2019|2020|2021|2022)\b/;
+                if (oldYears.test(text) || oldYears.test(res.link)) {
+                    score -= 200;
+                }
+
+                if (/penjabat|pj\.|plt\.|pjs\.|pelaksana tugas/i.test(text)) score -= 80;
                 
                 return { score, type };
             };
@@ -814,7 +936,10 @@ const nayaxaStandalone = {
                 .filter(res => res.status === 'fulfilled' && res.value !== null)
                 .map(res => res.value);
 
-            const searchDate = new Date().toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            const searchDate = new Date().toLocaleString('id-ID', { 
+                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', 
+                hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short' 
+            });
             return activeResults.length > 0 ? {
                 success: true,
                 query,

@@ -25,9 +25,13 @@ app.get('/health', (req, res) => {
 const nayaxaRoutes = require('./routes/nayaxaRoutes');
 app.use('/api/nayaxa', nayaxaRoutes);
 
-// Serve Static Files (Reports & Exports)
+// Serve Static Files (AI Reports & Exports)
 const path = require('path');
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// Bridge to Dashboard Uploads (For user-uploaded documents)
+const DASHBOARD_UPLOADS = 'D:/copy-dashboard/Backend/uploads';
+app.use('/uploads/dashboard', express.static(DASHBOARD_UPLOADS));
 
 const server = app.listen(PORT, () => {
     console.log(`=========================================`);

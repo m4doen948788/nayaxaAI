@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Send, Bot, User, Plus, Pin, Paperclip, Mic, Volume2, Sparkles, Search, MoreVertical, ChevronDown, Code2, Terminal, Square } from 'lucide-react';
+import { Send, Bot, User, Plus, Pin, Paperclip, Mic, Volume2, Sparkles, Search, MoreVertical, ChevronDown, Code2, Terminal, Square, X, Image as ImageIcon, FileText, Copy, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -11,6 +11,76 @@ const API_KEY = 'NAYAXA-BAPPERIDA-8888-9999-XXXX';
 const PROFIL_ID = 7;
 const INSTANSI_ID = 2;
 const api = createNayaxaApi(API_KEY);
+
+const TableWithCopy = ({ children }: { children: React.ReactNode }) => {
+  const [copied, setCopied] = useState(false);
+  const tableRef = useRef<HTMLTableElement>(null);
+
+  const handleCopy = () => {
+    if (!tableRef.current) return;
+    
+    // Get headers and rows
+    const rows = Array.from(tableRef.current.querySelectorAll('tr'));
+    
+    // Create text/plain version (TSV)
+    const plainText = rows.map(row => {
+      const cells = Array.from(row.querySelectorAll('th, td'));
+      return cells.map(cell => cell.textContent?.trim() || '').join('\t');
+    }).join('\n');
+
+    // Create text/html version for rich copy (retaining table structure)
+    const htmlTable = `
+      <style>
+        table { border-collapse: collapse; width: 100%; border: 1px solid #e2e8f0; font-family: sans-serif; }
+        th { background-color: #f1f5f9; font-weight: bold; border: 1px solid #e2e8f0; padding: 12px 8px; text-align: left; }
+        td { border: 1px solid #e2e8f0; padding: 12px 8px; }
+      </style>
+      <table>
+        ${tableRef.current.innerHTML}
+      </table>
+    `;
+
+    try {
+      const blobHtml = new Blob([htmlTable], { type: 'text/html' });
+      const blobText = new Blob([plainText], { type: 'text/plain' });
+      
+      const data = [new ClipboardItem({ 
+        'text/html': blobHtml, 
+        'text/plain': blobText 
+      })];
+      
+      navigator.clipboard.write(data).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      });
+    } catch (err) {
+      navigator.clipboard.writeText(plainText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  return (
+    <div className="relative group/table my-4 border border-white/10 rounded-2xl overflow-hidden bg-white/5 backdrop-blur-md shadow-2xl">
+      <div className="absolute right-3 top-3 z-10">
+        <button
+          onClick={handleCopy}
+          className={`p-2 rounded-xl transition-all flex items-center gap-2 text-xs font-bold shadow-lg ${
+            copied ? 'bg-emerald-500 text-white' : 'bg-indigo-600/80 hover:bg-indigo-600 text-white opacity-0 group-hover/table:opacity-100'
+          }`}
+        >
+          {copied ? <Check size={14} /> : <Copy size={14} />}
+          {copied ? 'Berhasil Disalin!' : 'Salin Tabel'}
+        </button>
+      </div>
+      <div className="overflow-x-auto p-4 custom-scrollbar">
+        <table ref={tableRef} className="w-full text-sm border-collapse min-w-[500px]">
+          {children}
+        </table>
+      </div>
+    </div>
+  );
+};
 
 export default function Chat() {
   const { currentUser } = useAuth();
@@ -24,11 +94,15 @@ export default function Chat() {
   const [lastBrainUsed, setLastBrainUsed] = useState<string | null>(null);
   const [codingMode, setCodingMode] = useState(false);
   const [activeSteps, setActiveSteps] = useState<{icon: string, label: string}[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<{ base64: string, mimeType: string, name: string, action?: string }[]>([]);
+  const [streamingContent, setStreamingContent] = useState('');
+  const [thinkingThought, setThinkingThought] = useState('');
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
 
   // Perbaikan Auto-Expand (Performance Fix)
@@ -55,7 +129,7 @@ export default function Chat() {
         scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
       }
     }
-  }, [messages, isTyping]);
+  }, [messages, isTyping, streamingContent, activeSteps, thinkingThought]);
 
   const fetchSessions = async () => {
     setLoadingSessions(true);
@@ -74,11 +148,58 @@ export default function Chat() {
     } catch (err) { console.error(err); }
   };
 
+  const processFiles = (files: File[]) => {
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const base64 = e.target?.result as string;
+        setSelectedFiles(prev => [...prev, { base64, mimeType: file.type, name: file.name }]);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    processFiles(files);
+    if (e.target) e.target.value = ''; // Reset input
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = Array.from(e.clipboardData.items);
+    const files = items
+      .filter(item => item.kind === 'file')
+      .map(item => item.getAsFile())
+      .filter((file): file is File => file !== null);
+    
+    if (files.length > 0) {
+      processFiles(files);
+    }
+  };
+
   const handleSend = async () => {
-    if (!input.trim() || isTyping) return;
-    const msg = input;
+    if ((!input.trim() && selectedFiles.length === 0) || isTyping) return;
+    
+    // Combine file actions into instructions
+    let fileInstructions = "";
+    selectedFiles.forEach(f => {
+      if (f.action && f.action !== 'Bahan Analisis') {
+        fileInstructions += `[FILE: ${f.name} -> ACTION: ${f.action}]\n`;
+      }
+    });
+
+    const msg = fileInstructions ? `${fileInstructions}\n${input}` : input;
+    const attachments = [...selectedFiles];
+    
     setInput('');
-    setMessages(prev => [...prev, { role: 'user', content: msg }]);
+    setSelectedFiles([]);
+    setMessages(prev => [...prev, { role: 'user', content: input || (attachments.length > 0 ? "*(Mengirimkan lampiran)*" : "") }]);
+    
+    // Force scroll to bottom after user sends message
+    setTimeout(() => {
+      scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
+
     setIsTyping(true);
     setActiveSteps([]);
     setThinkingBrain('DeepSeek');
@@ -87,6 +208,8 @@ export default function Chat() {
     abortControllerRef.current = new AbortController();
 
     try {
+      setStreamingContent('');
+      setThinkingThought('');
       const res = await api.chatStream(
         {
           message: msg,
@@ -95,7 +218,8 @@ export default function Chat() {
           session_id: activeSessionId,
           profil_id: currentUser?.id,
           instansi_id: INSTANSI_ID,
-          coding_mode: codingMode
+          coding_mode: codingMode,
+          files: attachments
         },
         (step) => {
           setActiveSteps(prev => {
@@ -103,9 +227,17 @@ export default function Chat() {
             return [...prev, step];
           });
         },
+        (chunk) => {
+            setStreamingContent(prev => prev + chunk);
+        },
+        (thoughtChunk) => {
+            setThinkingThought(prev => prev + thoughtChunk);
+        },
         abortControllerRef.current.signal
       );
-      setMessages(prev => [...prev, { role: 'model', content: res.text, brain_used: res.brain_used }]);
+      setMessages(prev => [...prev, { role: 'model', content: res.text || streamingContent || '*(Tidak ada respons dari Nayaxa)*', brain_used: res.brain_used }]);
+      setStreamingContent('');
+      setThinkingThought('');
       setLastBrainUsed(res.brain_used);
       if (!activeSessionId) {
         setActiveSessionId(res.session_id);
@@ -283,12 +415,24 @@ export default function Chat() {
                 </div>
                 <div className={`max-w-[75%] p-6 rounded-3xl text-[16px] ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white/5 border border-white/10 rounded-tl-none'}`}>
                   <div className="prose prose-invert max-w-none text-slate-200 leading-relaxed font-normal text-[16px] text-justify prose-p:my-1 prose-ul:my-1 prose-li:my-0 prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-xl">
-                    {m.content.split(/(\[NAYAXA_PROPOSAL:[^\]]+\])/g).map((part: string, index: number) => {
+                    {(m.content || '').split(/(\[NAYAXA_PROPOSAL:[^\]]+\])/g).map((part: string, index: number) => {
                       if (part.startsWith('[NAYAXA_PROPOSAL:')) {
                         const id = part.match(/\[NAYAXA_PROPOSAL:([^\]]+)\]/)?.[1] || '';
                         return <CodeProposalReview key={index} proposalId={id} api={api} />;
                       }
-                      return <ReactMarkdown key={index} remarkPlugins={[remarkGfm]}>{part}</ReactMarkdown>;
+                      return (
+                        <ReactMarkdown 
+                          key={index} 
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            table({ children }) {
+                              return <TableWithCopy>{children}</TableWithCopy>;
+                            }
+                          }}
+                        >
+                          {part}
+                        </ReactMarkdown>
+                      );
                     })}
                   </div>
                 </div>
@@ -300,10 +444,24 @@ export default function Chat() {
                 <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center shrink-0 border border-white/5 text-indigo-400">
                   <Bot size={18} />
                 </div>
-                <div className="bg-white/5 border border-white/10 p-5 rounded-3xl rounded-tl-none min-w-[220px]">
+                <div className="bg-white/5 border border-white/10 p-5 rounded-3xl rounded-tl-none min-w-[220px] max-w-[90%]">
+                  {/* Thought Section */}
+                  {thinkingThought && (
+                    <div className="mb-4 bg-black/20 rounded-2xl p-4 border border-white/5">
+                        <div className="flex items-center gap-2 mb-2 text-indigo-400 font-bold text-[11px] uppercase tracking-wider">
+                            <Sparkles size={12} className="animate-pulse" />
+                            PROSES BERPIKIR NAYAXA
+                        </div>
+                        <div className="text-[13px] text-slate-400 italic leading-relaxed whitespace-pre-wrap font-medium">
+                            {thinkingThought}
+                            <span className="inline-block w-1 h-3 ml-1 bg-indigo-500 animate-pulse" />
+                        </div>
+                    </div>
+                  )}
+
                   {/* Thought Trace UI */}
-                  {activeSteps.length > 0 ? (
-                    <div className="space-y-2">
+                  {activeSteps.length > 0 && (
+                    <div className="space-y-2 mb-4">
                       {activeSteps.map((step, i) => (
                         <motion.div
                           key={i}
@@ -328,7 +486,22 @@ export default function Chat() {
                         </motion.div>
                       ))}
                     </div>
-                  ) : (
+                  )}
+
+                  {streamingContent ? (
+                    <div className="prose prose-invert max-w-none text-slate-200 leading-relaxed font-normal text-[16px] text-justify prose-p:my-1 prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-xl">
+                        <ReactMarkdown 
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            table({ children }) {
+                              return <TableWithCopy>{children}</TableWithCopy>;
+                            }
+                          }}
+                        >
+                          {streamingContent + '█'}
+                        </ReactMarkdown>
+                    </div>
+                  ) : activeSteps.length === 0 && !thinkingThought && (
                     <div className="flex gap-1.5">
                       <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '0s' }}></div>
                       <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" style={{ animationDelay: '0.2s' }}></div>
@@ -360,16 +533,86 @@ export default function Chat() {
 
         {/* Input Bar */}
         <div className="p-8">
-            <div className="glass-card p-2 border-white/10 flex items-end gap-2 max-w-4xl mx-auto shadow-2xl">
-                <button className="p-3 text-slate-400 hover:text-white transition-all rounded-xl hover:bg-white/5"><Paperclip size={20} /></button>
-                <div className="flex-1 px-4 py-2">
-                    <textarea 
-                        ref={inputRef}
-                        value={input}
-                        rows={1}
-                        onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                        placeholder="Say something to Nayaxa..."
+            <input 
+              type="file" 
+              multiple 
+              className="hidden" 
+              ref={fileInputRef} 
+              onChange={handleFileChange} 
+            />
+            <div className="glass-card p-2 border-white/10 flex flex-col max-w-4xl mx-auto shadow-2xl transition-all">
+                {/* File Previews */}
+                <AnimatePresence>
+                  {selectedFiles.length > 0 && (
+                    <motion.div 
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="flex flex-wrap gap-3 p-4 border-b border-white/5 overflow-hidden"
+                    >
+                      {selectedFiles.map((file, idx) => (
+                        <motion.div 
+                          key={idx}
+                          initial={{ scale: 0.8, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          className="relative group w-32 h-40 bg-white/5 rounded-2xl border border-white/10 overflow-hidden flex flex-col"
+                        >
+                          <div className="flex-1 relative">
+                            {file.mimeType.startsWith('image/') ? (
+                              <img src={file.base64} alt={file.name} className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full flex flex-col items-center justify-center p-2 text-center">
+                                <FileText size={24} className="text-indigo-400 mb-1" />
+                                <span className="text-[9px] text-slate-400 truncate w-full px-1">{file.name}</span>
+                              </div>
+                            )}
+                            <button 
+                              onClick={() => setSelectedFiles(prev => prev.filter((_, i) => i !== idx))}
+                              className="absolute top-1 right-1 p-1 bg-rose-500 rounded-lg text-white opacity-0 group-hover:opacity-100 transition-all hover:scale-110 shadow-lg z-10"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                          
+                          {/* Action Dropdown */}
+                          <div className="p-1 bg-black/40 border-t border-white/5">
+                            <select 
+                              value={file.action || 'Bahan Analisis'}
+                              onChange={(e) => {
+                                const newAction = e.target.value;
+                                setSelectedFiles(prev => prev.map((f, i) => i === idx ? { ...f, action: newAction } : f));
+                              }}
+                              className="w-full bg-transparent text-[9px] text-indigo-300 font-bold outline-none cursor-pointer hover:text-white transition-colors"
+                            >
+                              <option value="Bahan Analisis" className="bg-slate-900">Bahan Analisis</option>
+                              <option value="Jadikan Acuan Format" className="bg-slate-900">Acuan Format</option>
+                              <option value="Buatkan Ringkasan" className="bg-slate-900">Ringkasan</option>
+                              <option value="Buatkan Ringkasan+Notulen" className="bg-slate-900">Summary + Notulen</option>
+                              <option value="Buatkan Ringkasan+Notulen+Word" className="bg-slate-900">Summary + Notulen + Word</option>
+                            </select>
+                          </div>
+                        </motion.div>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                <div className="flex items-end gap-2">
+                  <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="p-3 text-slate-400 hover:text-white transition-all rounded-xl hover:bg-white/5"
+                  >
+                    <Paperclip size={20} />
+                  </button>
+                  <div className="flex-1 px-4 py-2">
+                      <textarea 
+                          ref={inputRef}
+                          value={input}
+                          rows={1}
+                          onChange={(e) => setInput(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                          onPaste={handlePaste}
+                          placeholder="Say something to Nayaxa..."
                         className="w-full bg-transparent border-none focus:outline-none text-white text-[16px] resize-none min-h-[24px] max-h-40 py-1 overflow-y-auto custom-scrollbar"
                     />
                 </div>
@@ -386,7 +629,7 @@ export default function Chat() {
                     ) : (
                       <button 
                         onClick={handleSend}
-                        disabled={!input.trim()}
+                        disabled={!input.trim() && selectedFiles.length === 0}
                         className={`w-10 h-10 flex items-center justify-center rounded-xl transition-all shadow-lg ${
                             input.trim() 
                             ? 'bg-indigo-600 text-white shadow-indigo-600/30' 

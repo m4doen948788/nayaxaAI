@@ -29,7 +29,13 @@ export const createNayaxaApi = (apiKey: string) => {
       return res.data;
     },
     // SSE Streaming - Standalone only (widget uses /chat above)
-    chatStream: (data: any, onStep: (step: {icon: string, label: string}) => void, signal?: AbortSignal): Promise<{text: string, brain_used: string, session_id: string}> => {
+    chatStream: (
+      data: any, 
+      onStep: (step: any) => void, 
+      onContent: (chunk: string) => void, 
+      onThought: (chunk: string) => void,
+      signal?: AbortSignal
+    ): Promise<{text: string, brain_used: string, session_id: string}> => {
       return new Promise(async (resolve, reject) => {
         try {
           const response = await fetch(`${API_BASE_URL}/chat/stream`, {
@@ -60,6 +66,8 @@ export const createNayaxaApi = (apiKey: string) => {
               try {
                 const parsed = JSON.parse(dataLine);
                 if (eventType === 'step') { onStep(parsed); }
+                else if (eventType === 'message') { onContent(parsed.text); }
+                else if (eventType === 'thought') { onThought(parsed.text); }
                 else if (eventType === 'done') { resolve(parsed); return; }
                 else if (eventType === 'error') { reject(new Error(parsed.message)); return; }
               } catch (_) {}

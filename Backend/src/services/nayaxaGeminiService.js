@@ -442,8 +442,29 @@ const toolFunctions = {
     }
 };
 
+const TOOL_STEP_LABELS = {
+    search_internet:           { icon: '🌐', label: 'Mencari informasi di internet...' },
+    execute_sql_query:         { icon: '📊', label: 'Menganalisis database...' },
+    get_pegawai_statistics:    { icon: '📈', label: 'Mengambil statistik pegawai...' },
+    get_pegawai_ranking:       { icon: '🏆', label: 'Menghitung ranking bidang...' },
+    search_pegawai:            { icon: '👤', label: 'Mencari profil pegawai...' },
+    get_anomalies:             { icon: '⚠️', label: 'Mendeteksi anomali data...' },
+    search_database:           { icon: '📊', label: 'Menganalisis database...' },
+    generate_document:         { icon: '📄', label: 'Membuat dokumen...' },
+    generate_chart:            { icon: '📈', label: 'Membuat grafik visualisasi...' },
+    search_files_and_knowledge:{ icon: '🔍', label: 'Mencari di basis pengetahuan...' },
+    fill_excel_template:       { icon: '📋', label: 'Mengisi template Excel...' },
+    ingest_to_knowledge:       { icon: '🧠', label: 'Menyimpan ke basis pengetahuan...' },
+    list_project_files:        { icon: '📁', label: 'Menjelajahi struktur proyek...' },
+    read_code_file:            { icon: '📄', label: 'Membaca isi file kode...' },
+    write_code_file:           { icon: '📝', label: 'Menyiapkan proposal kode...' },
+    propose_code_changes:      { icon: '📦', label: 'Menyiapkan paket perubahan...' },
+    search_in_codebase:        { icon: '🔍', label: 'Mencari di dalam codebase...' },
+    execute_database_update:   { icon: '🛠️', label: 'Memodifikasi database...' },
+};
+
 const nayaxaGeminiService = {
-    chatWithNayaxa: async (userMessage, files, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '', nama_instansi = 'N/A', personaPromptSnippet = '', userProfile = null, lastActivityContext = null, coding_mode = false, session_id = null) => {
+    chatWithNayaxa: async (userMessage, files, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '', nama_instansi = 'N/A', personaPromptSnippet = '', userProfile = null, lastActivityContext = null, coding_mode = false, session_id = null, onStepCallback = null, signal = null) => {
         let apiKey = await getApiKey();
         let attempts = 0;
         let lastError = null;
@@ -482,7 +503,8 @@ WORKFLOW:
 1. Begitu menerima instruksi, langkah pertama WAJIB memanggil tool (Search/Read). JANGAN memberikan jawaban teks di turn pertama.
 2. Identifikasi file/tabel yang relevan secara mandiri.
 3. Lakukan perubahan dengan 'propose_code_changes' atau 'write_code_file'.
-4. Akhiri jawaban HANYA dengan ringkasan 1 kalimat perubahan dan marker [NAYAXA_PROPOSAL:id].`;
+4. Akhiri jawaban HANYA dengan ringkasan 1 kalimat perubahan dan marker [NAYAXA_PROPOSAL:id].
+- VISION: Jika user mengirimkan screenshot kode, error, atau desain UI, Anda WAJIB menganalisisnya secara visual untuk memandu perbaikan kode.`;
 
         const generalPersonaPrompt = `Identitas ANDA: Nayaxa, asisten AI dari Bapperida yang dibuat oleh Sammy.
 Gaya Bahasa: Sangat ceria, ramah, profesional, dan empatik. Di akhir setiap penjelasan, SELALU tawarkan bantuan ekstra atau berikan satu pertanyaan pendek.
@@ -493,22 +515,56 @@ PENTING - ADAPTASI FORMALITAS: Sesuaikan tingkat formalitas Anda dengan Profil K
 ${lastActivityContext ? `\nKONTEKS AKTIVITAS: "${lastActivityContext}"\nSapa user dengan hangat.\n` : ''}`;
 
         const systemInstruction = coding_mode ? codingAgentPrompt : `
-        ${generalPersonaPrompt}
-        
-        INSTRUKSI TEKNIS:
-        - JANGAN PERNAH mengirimkan pesan "Mohon tunggu" saat Anda akan menggunakan tool.
-        - Gunakan 'execute_sql_query' untuk data spesifik per bidang.
-        
-        PENTING - FORMAT JAWABAN:
-        - SELALU gunakan format Markdown (Heading, Bold, Bullet Points, dan Tabel Markdown).
-        - DILARANG JSON mentah di chat.
-        
-        Identitas USER: ${identitasUser}
-        ${personaPromptSnippet}
-        
-        ${schemaMapString}
-        (Analisis data secara ramah dan bantu user ${user_name} sepenuh hati).
+            ${generalPersonaPrompt}
+
+            ${generalPersonaPrompt}
+
+            !!! VISION & MULTIMODAL CAPABILITY (PENTING) !!!
+            - Jika user mengirimkan GAMBAR, SCREENSHOT, atau DATA VISUAL, Anda WAJIB menganalisisnya secara mendalam.
+            - Gunakan konten visual tersebut sebagai konteks utama untuk menjawab pertanyaan user.
+            - Jika user bertanya tentang "ini" atau "itu" sambil mengirimkan screenshot, asumsikan "ini/itu" merujuk pada objek di dalam gambar tersebut.
+
+            !!! PROTOKOL RISET BERDASARKAN FAKTA (PENTING) !!!
+            1. VERIFIKASI SEKARANG: Jika user bertanya tentang fakta yang bisa berubah (Berita, Jabatan Pejabat, Presiden, Pilkada, Teknologi Terbaru, atau Kejadian di 2024-2026), Anda WAJIB menggunakan tool 'search_internet'.
+            2. STRATEGI PENCARIAN PEJABAT: Gunakan kata kunci "Kabinet Merah Putih", "Pilkada 2024", "Pelantikan Serentak 2025", dan "Periode 2025-2029". Namun, SELALU waspada terhadap berita **RESHUFFLE** atau perubahan terbaru di tahun 2025-2029.
+            3. PRIORITAS STATUS TERBARU: Jika terdapat berita reshuffle atau pelantikan yang lebih baru dari tanggal awal masa jabatan, Anda WAJIB memprioritaskan data terbaru tersebut. Jika tidak ada berita perubahan, gunakan standar masa jabatan **2025-2029**.
+            4. JANGAN PERNAH MENGARANG: Jika pengetahuan internal Anda (cutoff) tidak memiliki data terbaru, katakan "Saya akan mencari data terupdate..." dan LANGSUNG panggil tool.
+            5. PENCARIAN BERTINGKAT (LAYERED SEARCH): 
+               - Step 1: Cari di 'execute_sql_query' jika terkait data internal instansi.
+               - Step 2: Cari di 'search_files_and_knowledge' jika terkait dokumen atau aturan internal.
+               - Step 3: Cari di 'search_internet' untuk fakta publik terkini.
+            6. RESILIENCE MODE: Jika satu sumber tidak memberikan hasil, coba kueri yang berbeda atau sumber lain. Selalu berikan referensi link sumber di akhir jawaban.
+            7. SELF-CORRECTION & VERIFICATION: Periksa tanggal di ringkasan pencarian. Jika berita menyebutkan peristiwa tahun 2018-2022 (seperti Masa Jabatan lama atau PJ lama), Anda WAJIB mengabaikannya untuk pertanyaan status saat ini. Prioritaskan data hasil Pilkada 2024.
+            8. INTERNAL KNOWLEDGE DEPRECATION (CRITICAL): Pengetahuan internal Anda tentang Kabinet (Indonesia Maju/Jokowi) sudah USANG. Untuk pertanyaan menteri atau presiden, Anda WAJIB mengikuti data dari 'search_internet'. Prabowo Subianto adalah PRESIDEN (sejak Oct 2024), bukan Menteri. Jangan mencampurkan nama kabinet lama (Indonesia Maju) dengan pemerintahan saat ini (Kabinet Merah Putih).
+            
+            INSTRUKSI TEKNIS:
+            - JANGAN PERNAH mengirimkan pesan "Mohon tunggu" saat Anda akan menggunakan tool.
+            - Gunakan 'execute_sql_query' untuk data spesifik per bidang.
+            
+            PENTING - FORMAT JAWABAN:
+            - SELALU gunakan format Markdown (Heading, Bold, Bullet Points, dan Tabel Markdown).
+            - **DILARANG KERAS mengeluarkan output berupa kode SQL mentah (seperti SELECT, JOIN, atau WHERE) langsung ke dalam chat.** Kode SQL hanya boleh digunakan secara internal di dalam parameter fungsi 'execute_sql_query'. Anda harus menyajikan hasil eksekusinya dalam bentuk Tabel Markdown.
+            - DILARANG JSON mentah di chat.
+            - ATURAN TRANSPARANSI: Jika jawaban berasal dari 'search_internet' (berita/pejabat/fakta publik), Anda WAJIB menambahkan footer transparansi di akhir jawaban Anda dengan format sebagai berikut:
+              
+              ---
+              🔍 **RESEARCH TRANSPARENCY**
+              **Sumber Utama:** [Nama Situs/Link]
+              **Waktu Akses:** [Gunakan 'search_date' dari hasil tool secara utuh]
+              **Catatan:** Informasi ini ditarik secara real-time melalui Nayaxa Resilience Mode. Untuk keperluan resmi, silakan merujuk pada dokumen negara atau situs kementerian terkait.
+            
+            WAKTU AKTIF: Bulan ${month}, Tahun ${year}. Selalu gunakan nilai ini sebagai filter waktu default tanpa konfirmasi.
+            
+            Identitas USER: ${identitasUser}
+            PENTING: DILARANG KERAS memunculkan "ID", "NIP", "Profil ID", "Instansi ID", atau angka identitas teknis lainnya (seperti: "ID: 151", "ID: 66", dsb) kecuali user bertanya secara spesifik. 
+            - Anda WAJIB MEMBERSIHKAN (sanitasi) semua kolom ID dari hasil database sebelum menyajikannya.
+            - Untuk 'Lampiran', jangan tampilkan ID-nya. Cukup sebutkan "Tersedia" atau berikan link. Jangan pernah menulis "(ID: 66)".
+            ${personaPromptSnippet}
+            
+            ${schemaMapString}
+            (Analisis data secara ramah dan bantu user ${user_name} sepenuh hati).
         `;
+
 
         while (attempts < 2) {
             try {
@@ -576,6 +632,20 @@ ${lastActivityContext ? `\nKONTEKS AKTIVITAS: "${lastActivityContext}"\nSapa use
                         const excelFile = attachmentList.find(f => f.mimeType?.includes('excel') || f.mimeType?.includes('spreadsheetml'));
                         const excelBase64 = excelFile ? excelFile.base64 : null;
                         
+                        // UI Feedback
+                        if (onStepCallback) {
+                            if (call.name === 'generate_document') {
+                                const ext = (call.args.format || 'DOC').toUpperCase();
+                                onStepCallback({ icon: '📝', label: `Sedang membuat file (${ext})...` });
+                            } else if (call.name === 'pembangkit_paparan_pptx') {
+                                onStepCallback({ icon: '📊', label: 'Sedang membuat file (PPTX)...' });
+                            } else if (TOOL_STEP_LABELS[call.name]) {
+                                onStepCallback({ icon: TOOL_STEP_LABELS[call.name].icon, label: TOOL_STEP_LABELS[call.name].label });
+                            } else {
+                                onStepCallback({ icon: '⚡', label: `Nayaxa menggunakan: ${call.name}` });
+                            }
+                        }
+
                         let res = await toolFunctions[call.name]({ ...call.args, instansi_id, month, year }, { baseUrl, excelBase64, app_id: 1 });
                         
                         if (res.success && res.download_url) {

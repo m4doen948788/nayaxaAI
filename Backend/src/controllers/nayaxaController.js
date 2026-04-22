@@ -98,6 +98,11 @@ const nayaxaController = {
             attachmentList = [{ base64: fileBase64, mimeType: fileMimeType }];
         }
 
+        console.log(`[Nayaxa] Chat Request: "${message.substring(0, 50)}..." | Attachments: ${attachmentList.length}`);
+        if (attachmentList.length > 0) {
+            console.log(`[Nayaxa] Attachment Types:`, attachmentList.map(f => f.mimeType || 'no-mime'));
+        }
+
         const activeSessionId = session_id || `sess_${Date.now()}`;
         const app_id = req.nayaxaApp.id;
 
@@ -169,7 +174,7 @@ const nayaxaController = {
             // --- Parallel Data Fetching for Context ---
             const [nama_instansi, userProfile, personaText, activity] = await Promise.all([
                 nayaxaStandalone.getInstansiName(instansi_id),
-                nayaxaStandalone.getPegawaiProfile(profil_id),
+                nayaxaStandalone.getPegawaiProfile(profil_id, user_name),
                 personaService.getPersona(user_id),
                 history.length === 1 ? nayaxaStandalone.getLastUserActivity(profil_id, user_id) : Promise.resolve(null)
             ]);
@@ -190,36 +195,47 @@ const nayaxaController = {
             }
 
             const isDeepSeekEnabled = process.env.DEEPSEEK_ENABLED === 'true';
-            const hasImages = attachmentList.some(f => f.mimeType && f.mimeType.startsWith('image/'));
+            const hasImages = attachmentList.some(f => 
+                (f.mimeType && f.mimeType.startsWith('image/')) || 
+                (f.name && /\.(png|jpg|jpeg|webp|gif|bmp)$/i.test(f.name))
+            );
             const isEditorFeedback = message.includes('[NAYAXA_EDITOR_FEEDBACK]');
             
             // ROUTING LOGIC:
-            // 1. If contains IMAGES or SCANNED PDFs -> Always Use Gemini (Vision)
+            // 1. If contains IMAGES or SCANNED PDFs (OCR required) -> Always Use Gemini (Vision)
             // 2. Otherwise if it's Editor Feedback -> Prefer DeepSeek (for doc tools)
-            // 3. Otherwise if DeepSeek is enabled -> Use DeepSeek (Better logic for text)
+            // 3. Otherwise if DeepSeek is enabled -> Use DeepSeek (Absolute priority for text/logic)
             let isDeepSeekPrefered = isDeepSeekEnabled && !hasImages && !hasScannedPdf;
             
-            // Override: If user is in Editor Mode, force DeepSeek as it has better doc tools
-            if (isEditorFeedback && isDeepSeekEnabled) {
+            // Force DeepSeek for text-only queries
+            if (!hasImages && !hasFiles && isDeepSeekEnabled) {
                 isDeepSeekPrefered = true;
             }
 
             const tryGemini = async (isFallback = false) => {
                 brain = isFallback ? 'Gemini (Fallback)' : 'Gemini';
                 return await nayaxaGemini.chatWithNayaxa(
-                    message, attachmentList, instansi_id, month, year, history, user_name, profil_id, '', '', '', 
-                    baseUrl, fullDate, nama_instansi, personaPromptSnippet, userProfile, lastActivityContext, 
-                    !!coding_mode, activeSessionId
+                     message, attachmentList, instansi_id, month, year, history, user_name, profil_id, 
+                     '', current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet, 
+                     userProfile, lastActivityContext, !!coding_mode, activeSessionId
                 );
             };
 
             const tryDeepSeek = async (isFallback = false) => {
                 brain = isFallback ? 'DeepSeek (Fallback)' : 'DeepSeek';
-                return await nayaxaDeepSeek.chatWithNayaxa(
-                    message, '', instansi_id, month, year, history, user_name, profil_id, 
-                    baseUrl, fullDate, attachmentList, nama_instansi, personaPromptSnippet, 
-                    userProfile, lastActivityContext, !!coding_mode
-                );
+                // Clean up attachment context: DeepSeek handles text better
+                const textOnlyAttachments = attachmentList.filter(f => !f.mimeType?.includes('image'));
+                
+                try {
+                    return await nayaxaDeepSeek.chatWithNayaxa(
+                        message, textOnlyAttachments, instansi_id, month, year, history, user_name, profil_id, 
+                        '', current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet, 
+                        userProfile, lastActivityContext, !!coding_mode, activeSessionId
+                    );
+                } catch (err) {
+                    console.error('[DeepSeek Service Error]:', err.message);
+                    throw err;
+                }
             };
 
             if (isDeepSeekPrefered) {
@@ -227,10 +243,18 @@ const nayaxaController = {
                     // Try DeepSeek first for text/docs
                     responseText = await tryDeepSeek();
                 } catch (dsError) {
-                    const isDsOverloaded = dsError.response?.status === 429 || dsError.message?.includes('429') || dsError.message?.includes('quota');
                     console.warn(`[Nayaxa] DeepSeek issue: ${dsError.message}. Falling back to Gemini...`);
-                    // Fallback to Gemini if DeepSeek is overloaded or fails
-                    responseText = await tryGemini(true);
+                    try {
+                        // Fallback to Gemini only if absolutely necessary
+                        responseText = await tryGemini(true);
+                    } catch (geminiError) {
+                        // If backup engine also fails (e.g. leaked key), throw a friendly error
+                        console.error('[Nayaxa] Both engines failed:', geminiError.message);
+                        if (geminiError.message?.includes('leaked')) {
+                            throw new Error("Nayaxa Engine sedang mengalami gangguan teknis pada sistem cadangan. Kami sedang memperbaikinya. Mohon gunakan kueri singkat sementara waktu.");
+                        }
+                        throw geminiError;
+                    }
                 }
             } else {
                 try {
@@ -239,10 +263,11 @@ const nayaxaController = {
                 } catch (geminiError) {
                     const status = geminiError.status || geminiError.response?.status;
                     const isGeminiOverloaded = status === 503 || status === 429 || 
-                                              geminiError.message?.includes('503') || geminiError.message?.includes('429');
+                                              geminiError.message?.includes('503') || geminiError.message?.includes('429') ||
+                                              geminiError.message?.includes('leaked');
                     
                     if (isGeminiOverloaded && isDeepSeekEnabled && !hasImages) {
-                        console.warn('[Nayaxa] Gemini overloaded, falling back to DeepSeek...');
+                        console.warn('[Nayaxa] Gemini failed/leaked, falling back to DeepSeek...');
                         responseText = await tryDeepSeek(true);
                     } else {
                         throw geminiError;
@@ -299,7 +324,7 @@ const nayaxaController = {
         const {
             message, files,
             user_id, user_name, profil_id, instansi_id,
-            session_id, coding_mode
+            session_id, current_page, page_title, coding_mode
         } = req.body;
 
         const attachmentList = files || [];
@@ -321,6 +346,33 @@ const nayaxaController = {
 
         await queueRequest();
         try {
+            // --- SMART SENSING: Identify PDF Type (Text vs Scan) ---
+            let hasScannedPdf = false;
+            const pdfFiles = attachmentList.filter(f => f.mimeType?.includes('pdf'));
+            if (pdfFiles.length > 0) {
+                sendEvent('step', { icon: '📄', label: `Membaca ${pdfFiles.length} file PDF...` });
+            }
+            
+            for (const file of attachmentList) {
+                if (file.mimeType?.includes('pdf')) {
+                    try {
+                        const cleanB64 = file.base64.includes('base64,') ? file.base64.split('base64,')[1] : file.base64;
+                        const buffer = Buffer.from(cleanB64, 'base64');
+                        const pdfData = await pdf(buffer);
+                        const textLength = pdfData.text?.trim().length || 0;
+                        
+                        if (textLength < 100) {
+                            console.log(`[SmartSensing_SSE] PDF "${file.name}" identified as SCANNED (Text length: ${textLength}). Routing to Gemini.`);
+                            hasScannedPdf = true;
+                        } else {
+                            console.log(`[SmartSensing_SSE] PDF "${file.name}" identified as TEXTUAL (Text length: ${textLength}). Routing to DeepSeek.`);
+                        }
+                    } catch (e) {
+                        console.warn(`[SmartSensing_SSE] Failed to peak into PDF: ${e.message}`);
+                        hasScannedPdf = true; // Safety fallback to Gemini if parsing fails
+                    }
+                }
+            }
             // Save user message
             await dbNayaxa.query(
                 'INSERT INTO nayaxa_chat_history (app_id, user_id, session_id, role, content) VALUES (?, ?, ?, ?, ?)',
@@ -328,6 +380,7 @@ const nayaxaController = {
             );
 
             // Load history
+            console.log(`[Trace] Loading history for session: ${activeSessionId}`);
             const [historyRows] = await dbNayaxa.query(
                 'SELECT role, content FROM nayaxa_chat_history WHERE session_id = ? ORDER BY created_at DESC LIMIT 30',
                 [activeSessionId]
@@ -337,6 +390,7 @@ const nayaxaController = {
                 parts: [{ text: h.content }]
             }));
 
+            console.log(`[Trace] Fetching persona and profile data...`);
             const now = new Date();
             const month = now.getMonth() + 1;
             const year = now.getFullYear();
@@ -348,7 +402,7 @@ const nayaxaController = {
 
             const [nama_instansi, userProfile, personaText, activity] = await Promise.all([
                 nayaxaStandalone.getInstansiName(instansi_id),
-                nayaxaStandalone.getPegawaiProfile(profil_id),
+                nayaxaStandalone.getPegawaiProfile(profil_id, user_name),
                 personaService.getPersona(user_id),
                 history.length === 1 ? nayaxaStandalone.getLastUserActivity(profil_id, user_id) : Promise.resolve(null)
             ]);
@@ -363,13 +417,16 @@ const nayaxaController = {
                 if (dupRows.length === 0) lastActivityContext = activity.description;
             }
 
-            // Step callback: fire SSE event for each tool step
-            const onStepCallback = (stepInfo) => {
-                sendEvent('step', stepInfo);
+            // Step callback: fire SSE event for each tool step or thought chunk
+            const onStepCallback = (data) => {
+                if (data.type === 'thought') {
+                    sendEvent('thought', { text: data.text });
+                } else if (data.type === 'message_chunk') {
+                    sendEvent('message', { text: data.text });
+                } else {
+                    sendEvent('step', data);
+                }
             };
-
-            // Send "thinking" signal
-            sendEvent('step', { icon: '🧠', label: 'Nayaxa sedang berpikir...' });
 
             const abortController = new AbortController();
             const { signal } = abortController;
@@ -390,23 +447,59 @@ const nayaxaController = {
             let responseText = '';
             let brainUsed = 'DeepSeek';
 
+            const hasImages = attachmentList.some(f => 
+                (f.mimeType && f.mimeType.startsWith('image/')) || 
+                (f.name && /\.(png|jpg|jpeg|webp|gif|bmp)$/i.test(f.name))
+            );
+            const isDeepSeekEnabled = process.env.DEEPSEEK_ENABLED === 'true';
+            
+            // ROUTING: Use Gemini for images or scanned PDFs, otherwise try DeepSeek
+            const useDeepSeek = isDeepSeekEnabled && !hasImages && !hasScannedPdf;
+            console.log(`[Trace] Routing decision: ${useDeepSeek ? 'DeepSeek' : 'Gemini'} | hasImages=${hasImages}, hasScannedPdf=${hasScannedPdf}`);
+
             try {
-                // Primary: DeepSeek
-                responseText = await nayaxaDeepSeek.chatWithNayaxa(
-                    message, blueprintContext, instansi_id, month, year, history, user_name, profil_id,
-                    baseUrl, fullDate, attachmentList, nama_instansi, personaPromptSnippet,
-                    userProfile, lastActivityContext, !!coding_mode, onStepCallback, signal, activeSessionId
-                );
+                if (useDeepSeek) {
+                    console.log(`[Trace] Starting DeepSeek call...`);
+                    brainUsed = 'DeepSeek';
+                    const textOnlyAttachments = attachmentList.filter(f => !f.mimeType?.includes('image'));
+                    responseText = await nayaxaDeepSeek.chatWithNayaxa(
+                        message, textOnlyAttachments, instansi_id, month, year, history, user_name, profil_id,
+                        blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet,
+                        userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal
+                    );
+                } else {
+                    brainUsed = 'Gemini';
+                    responseText = await nayaxaGemini.chatWithNayaxa(
+                        message, attachmentList, instansi_id, month, year, history, user_name, profil_id,
+                        blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet,
+                        userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal
+                    );
+                }
             } catch (err) {
-                console.error('[SSE Fallback] DeepSeek failed, trying Gemini...', err.message);
-                brainUsed = 'Gemini (Fallback)';
-                sendEvent('step', { icon: '🔄', label: 'DeepSeek sibuk, beralih ke Gemini...' });
+                console.error('[Nayaxa_SSE_Error] Primary model failed, trying fallback...', err.message);
                 
-                responseText = await nayaxaGemini.chatWithNayaxa(
-                    message, attachmentList, instansi_id, month, year, history, user_name, profil_id,
-                    blueprintContext, '', '', baseUrl, fullDate, nama_instansi, personaPromptSnippet,
-                    userProfile, lastActivityContext, !!coding_mode, activeSessionId
-                );
+                if (brainUsed === 'DeepSeek') {
+                    brainUsed = 'Gemini (Fallback)';
+                    sendEvent('step', { icon: '🔄', label: 'DeepSeek sedang sibuk, beralih ke pencadangan...' });
+                    responseText = await nayaxaGemini.chatWithNayaxa(
+                        message, attachmentList, instansi_id, month, year, history, user_name, profil_id,
+                        blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet,
+                        userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal
+                    );
+                } else {
+                    // Gemini failed, try DeepSeek if no images
+                    if (!hasImages && isDeepSeekEnabled) {
+                        brainUsed = 'DeepSeek (Fallback)';
+                        sendEvent('step', { icon: '🔄', label: 'Gemini sedang sibuk, beralih ke pencadangan...' });
+                        responseText = await nayaxaDeepSeek.chatWithNayaxa(
+                            message, [], instansi_id, month, year, history, user_name, profil_id,
+                            blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet,
+                            userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal
+                        );
+                    } else {
+                        throw err;
+                    }
+                }
             }
 
             if (signal.aborted) return;
@@ -421,6 +514,15 @@ const nayaxaController = {
             );
 
             // Send final response
+            // --- CENTRALIZED CLEANUP ---
+            // Remove any leaked technical tags or DSML robot-speak
+            responseText = responseText.replace(/<\|[\s\S]*?\|>/g, '');
+            responseText = responseText.replace(/<[\s\S]*?DSML[\s\S]*?>/gi, '');
+            responseText = responseText.replace(/<[\s\S]*?function_calls[\s\S]*?>/gi, '');
+            responseText = responseText.replace(/<[\s\S]*?invoke[\s\S]*?>/gi, '');
+            responseText = responseText.replace(/<[\s\S]*?parameter[\s\S]*?>/gi, '');
+            responseText = responseText.trim();
+
             sendEvent('done', { text: responseText, brain_used: brainUsed, session_id: activeSessionId });
             res.end();
 
@@ -564,7 +666,44 @@ const nayaxaController = {
             const result = await proposalService.rejectProposal(id);
             res.json(result);
         } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+    },
+
+    getProactiveInsight: async (req, res) => {
+        const { current_page, instansi_id } = req.query;
+        try {
+            const now = new Date();
+            const month = now.getMonth() + 1;
+            const year = now.getFullYear();
+
+            // Fetch minimal data for a quick proactive tip
+            let tipsData = null;
+            if (instansi_id) {
+                try {
+                    const stats = await nayaxaStandalone.getPegawaiStatistics(instansi_id, month, year);
+                    tipsData = stats;
+                } catch (e) { /* graceful — no tip if data unavailable */ }
+            }
+
+            const pageInsights = {
+                dashboard: 'Pantau statistik kegiatan tim Anda dan identifikasi tren kinerja bulan ini.',
+                kegiatan: 'Tambahkan kegiatan hari ini untuk menjaga akurasi laporan bulanan.',
+                surat: 'Pastikan semua surat masuk sudah terdaftar dan terklasifikasi dengan benar.',
+                default: `Saya siap membantu analisis data dan menjawab pertanyaan seputar kinerja instansi.`
+            };
+
+            const tip = pageInsights[current_page] || pageInsights.default;
+            const activeCount = tipsData?.total_pegawai_aktif || null;
+            const insight = activeCount
+                ? `${tip} Saat ini terdapat **${activeCount} pegawai aktif** yang terdaftar.`
+                : tip;
+
+            res.json({ success: true, insight, page: current_page });
+        } catch (error) {
+            console.error('ProactiveInsight Error:', error);
+            res.json({ success: true, insight: 'Halo! Ada yang bisa saya bantu hari ini?' });
+        }
     }
 };
+
 
 module.exports = nayaxaController;

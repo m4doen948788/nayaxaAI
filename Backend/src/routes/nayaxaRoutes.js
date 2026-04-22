@@ -11,12 +11,14 @@ router.get('/export/:filename', nayaxaController.downloadExport);
 router.use(verifyApiKey);
 
 router.get('/dashboard-insights', nayaxaController.getDashboardInsights);
+router.get('/proactive-insight', nayaxaController.getProactiveInsight);
 router.get('/sessions', nayaxaController.getChatSessions);
 router.get('/history/:session_id', nayaxaController.getChatHistoryBySession);
 router.delete('/session/:session_id', nayaxaController.deleteChatSession);
 router.post('/session/:session_id/pin', nayaxaController.togglePinSession);
 router.post('/chat', nayaxaController.chat);
-router.post('/chat/stream', nayaxaController.chatStream); // SSE - Standalone only
+router.post('/chatStream', nayaxaController.chatStream); // Widget & copy-dashboard
+router.post('/chat/stream', nayaxaController.chatStream); // Nayaxa standalone frontend
 
 // Knowledge management
 router.get('/knowledge', nayaxaKnowledgeController.getAll);
