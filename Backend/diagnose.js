@@ -31,7 +31,7 @@ async function runDiagnosis() {
             max_tokens: 5
         }, {
             headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}` },
-            timeout: 5000
+            timeout: 15000 // Diperpanjang ke 15 detik
         });
         console.log('   ✅ DeepSeek Aktif & Merespon.');
     } catch (err) {
@@ -42,7 +42,6 @@ async function runDiagnosis() {
     console.log('\n3. Memeriksa Gemini (Otak Cadangan)...');
     try {
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        // Menggunakan model 2.5 Flash sesuai temuan kita tadi
         const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
         const result = await model.generateContent('Hi');
         console.log('   ✅ Gemini 2.5 Aktif & Merespon.');
@@ -50,19 +49,17 @@ async function runDiagnosis() {
         console.log('   ❌ Gemini Error: ' + err.message);
     }
 
-    // 4. Check PDF Library
+    // 4. Memeriksa Library PDF (Mode Detektif)
     console.log('\n4. Memeriksa Library PDF...');
     try {
-        const dummyBuffer = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Title (Test) >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF');
-        
-        // Penyesuaian untuk pdf-parse v2.4.5
         const pdfParser = require('pdf-parse');
         const parseFunction = typeof pdfParser === 'function' ? pdfParser : pdfParser.default;
         
         if (typeof parseFunction !== 'function') {
-            throw new Error('Library pdf-parse terinstall tapi tidak bisa dipanggil sebagai fungsi.');
+            throw new Error('Library pdf-parse tidak dapat dipanggil sebagai fungsi.');
         }
 
+        const dummyBuffer = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Title (Test) >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF');
         await parseFunction(dummyBuffer);
         console.log('   ✅ Library PDF (pdf-parse) Berjalan Baik.');
     } catch (err) {

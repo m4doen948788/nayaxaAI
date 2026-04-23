@@ -603,7 +603,8 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                         const cleanB64 = base64.includes('base64,') ? base64.split('base64,')[1] : base64;
                         const buffer = Buffer.from(cleanB64, 'base64');
                         const pdfParser = typeof pdf === 'function' ? pdf : pdf.default;
-                        if (!pdfParser) throw new Error('Library pdf-parse tidak dapat dipanggil sebagai fungsi.');
+                        
+                        if (!pdfParser) throw new Error('Library pdf-parse tidak ditemukan.');
                         const pdfData = await pdfParser(buffer);
                         const extractedText = pdfData.text?.trim() || '';
 
