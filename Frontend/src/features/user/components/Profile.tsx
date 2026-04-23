@@ -1,5 +1,5 @@
 import { User, Shield, Key, History, Mail, MapPin, Briefcase, Zap, Star, ShieldCheck } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '@/src/contexts/AuthContext';
 
 export default function Profile() {
   const { currentUser } = useAuth();

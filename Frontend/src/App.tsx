@@ -2,11 +2,14 @@ import { BrowserRouter as Router, Routes, Route, Navigate, NavLink } from 'react
 import { LayoutDashboard, MessageSquare, BookOpen, User, Settings, Bot, Menu, X } from 'lucide-react';
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import Dashboard from './pages/Dashboard';
-import Chat from './pages/Chat';
-import Knowledge from './pages/Knowledge';
-import Profile from './pages/Profile';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
+
+// Feature Components (Absolute Paths)
+import Dashboard from '@/src/features/dashboard/components/Dashboard';
+import Chat from '@/src/features/chat/components/Chat';
+import Knowledge from '@/src/features/knowledge/components/Knowledge';
+import Profile from '@/src/features/user/components/Profile';
+
+import { AuthProvider, useAuth } from '@/src/contexts/AuthContext';
 
 function AppContent() {
   const [isSidebarOpen, setSidebarOpen] = useState(true);

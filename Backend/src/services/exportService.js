@@ -91,13 +91,28 @@ const exportService = {
 
             doc.pipe(s);
             
+            // --- PROFESSIONAL HEADER ---
+            doc.rect(0, 0, 612, 80).fill('#1e1b4b'); // Dark Navy Header
+            doc.fillColor('#ffffff').fontSize(22).font('Helvetica-Bold').text('NAYAXA INTELLIGENCE', 50, 25);
+            doc.fontSize(10).font('Helvetica').text('Badan Perencanaan Pembangunan Riset dan Inovasi Daerah', 50, 52);
+            doc.fontSize(8).text('Nayaxa v4.6.1 Stable Build', 400, 52, { align: 'right' });
+
+            // Move cursor below header
+            doc.moveDown(5);
+            
+            // Title
+            const displayTitle = filename.replace('.pdf', '').replace(/_/g, ' ').toUpperCase();
+            doc.fillColor('#1e293b').fontSize(16).font('Helvetica-Bold').text(displayTitle, { align: 'center' });
+            doc.moveDown(0.5);
+            doc.strokeColor('#e2e8f0').lineWidth(1).moveTo(50, doc.y).lineTo(560, doc.y).stroke();
+            doc.moveDown(1.5);
+
             // Content
             const cleanContent = sanitizeText(content);
-            
-            doc.fontSize(12).fillColor('#1e293b').text(cleanContent, {
+            doc.fillColor('#334155').fontSize(11).font('Helvetica').text(cleanContent, {
                 align: 'justify',
-                indent: 20,
-                lineGap: 5
+                lineGap: 6,
+                paragraphGap: 10
             });
             
             // Footer
@@ -105,10 +120,10 @@ const exportService = {
             for (let i = range.start; i < range.start + range.count; i++) {
                 doc.switchToPage(i);
                 doc.fontSize(8).fillColor('#94a3b8').text(
-                    `Nayaxa AI Engine v1.0 - Halaman ${i + 1}`,
-                    50, 
+                    `Halaman ${i + 1} dari ${range.count}`,
+                    50,
                     doc.page.height - 50,
-                    { align: 'center', lineBreak: false }
+                    { align: 'center' }
                 );
             }
 

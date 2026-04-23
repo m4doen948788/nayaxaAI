@@ -55,7 +55,11 @@ const toolFunctions = {
                                 format === 'pdf' ? exportService.generatePDF(content, filename) :
                                 exportService.generateWord(content, filename));
             
-            return { success: true, download_url: downloadUrl, message: `File ${format.toUpperCase()} siap! Berikan link ini ke user: ${downloadUrl}` };
+            return { 
+                success: true, 
+                download_url: downloadUrl, 
+                message: `File ${format.toUpperCase()} '${filename}' berhasil dibuat. JANGAN tuliskan link download di jawaban Anda, karena sistem sudah menampilkannya secara otomatis melalui tombol.` 
+            };
         } catch (err) {
             return { success: false, error: err.message };
         }
@@ -66,7 +70,7 @@ const toolFunctions = {
             return { 
                 success: true, 
                 download_url: res.url, 
-                message: `Paparan PPTX '${data.judul}' berhasil dibuat dengan tema Modern 2026. Link: ${res.url}` 
+                message: `Paparan PPTX '${data.judul}' berhasil dibuat. JANGAN tuliskan link download di jawaban Anda, karena sistem sudah menampilkannya secara otomatis melalui tombol.` 
             };
         } catch (err) {
             return { success: false, error: err.message };
@@ -97,7 +101,7 @@ const toolFunctions = {
             }
             const downloadUrl = await exportService.fillExcelTemplate(excelBase64, filled_data, filename);
             const fullUrl = downloadUrl.startsWith('http') ? downloadUrl : `${baseUrl}${downloadUrl}`;
-            return { success: true, download_url: fullUrl, message: `Excel berhasil diisi! Berikan link ini ke user: ${fullUrl}` };
+            return { success: true, download_url: fullUrl, message: `Excel berhasil diisi! JANGAN tuliskan link download di jawaban Anda, karena sistem sudah menampilkannya secara otomatis melalui tombol.` };
         } catch (err) {
             return { success: false, error: err.message };
         }

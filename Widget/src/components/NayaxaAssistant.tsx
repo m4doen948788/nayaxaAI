@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { createNayaxaApi } from './api';
-import NayaxaChart from './NayaxaChart';
+import { createNayaxaApi } from '@/src/api';
+import NayaxaChart from '@/src/components/NayaxaChart';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import Mermaid from './Mermaid';
+import Mermaid from '@/src/components/Mermaid';
 import { Send, Bot, User, Zap, X, ChevronDown, Paperclip, FileText, Image as ImageIcon } from 'lucide-react';
 
 const API_KEY = 'NAYAXA-BAPPERIDA-8888-9999-XXXX';

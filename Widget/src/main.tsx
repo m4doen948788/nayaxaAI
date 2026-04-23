@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import NayaxaAssistant from './NayaxaAssistant'
+import NayaxaAssistant from '@/src/components/NayaxaAssistant'
 import './index.css'
 
 // Export as a mountable function for non-React apps

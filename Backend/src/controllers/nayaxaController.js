@@ -651,6 +651,13 @@ const nayaxaController = {
                 return res.status(404).send('File not found.');
             }
 
+            // PDF Smart Preview: If it's a PDF, try to send as inline preview
+            if (filename.toLowerCase().endsWith('.pdf')) {
+                res.setHeader('Content-Type', 'application/pdf');
+                res.setHeader('Content-Disposition', 'inline; filename="' + filename + '"');
+                return res.sendFile(filePath);
+            }
+
             res.download(filePath, filename, (err) => {
                 if (err) {
                     console.error('[DOWNLOAD] Error sending file:', err);

@@ -3,9 +3,9 @@ import { Send, Bot, User, Plus, Pin, Paperclip, Mic, Volume2, Sparkles, Search, 
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { createNayaxaApi } from '../api';
-import { useAuth } from '../contexts/AuthContext';
-import CodeProposalReview from '../components/CodeProposalReview';
+import { createNayaxaApi } from '@/src/api';
+import { useAuth } from '@/src/contexts/AuthContext';
+import CodeProposalReview from '@/src/features/chat/components/CodeProposalReview';
 
 const API_KEY = 'NAYAXA-BAPPERIDA-8888-9999-XXXX';
 const PROFIL_ID = 7;

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Users, Activity, Target, Zap, TrendingUp, AlertCircle } from 'lucide-react';
 import { motion } from 'motion/react';
-import { createNayaxaApi } from '../api';
+import { createNayaxaApi } from '@/src/api';
 
 const API_KEY = 'nayaxa_engine_secret_key'; // In real app, get from context/storage
 const api = createNayaxaApi(API_KEY);

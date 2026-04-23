@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Book, Plus, Search, Trash2, Edit3, ExternalLink, Filter, Database } from 'lucide-react';
 import { motion } from 'motion/react';
-import { createNayaxaApi } from '../api';
+import { createNayaxaApi } from '@/src/api';
 
 const API_KEY = 'nayaxa_engine_secret_key'; // Mock
 const api = createNayaxaApi(API_KEY);
