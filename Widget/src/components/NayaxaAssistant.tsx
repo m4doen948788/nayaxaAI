@@ -7,9 +7,21 @@ import remarkGfm from 'remark-gfm';
 import Mermaid from '@/src/components/Mermaid';
 import { Send, Bot, User, Zap, X, ChevronDown, Paperclip, FileText, Image as ImageIcon } from 'lucide-react';
 
-const API_KEY = 'NAYAXA-BAPPERIDA-8888-9999-XXXX';
+interface NayaxaAssistantProps {
+  baseUrl?: string;
+  apiKey?: string;
+  user?: any;
+  title?: string;
+  subtitle?: string;
+}
 
-export default function NayaxaAssistant() {
+export default function NayaxaAssistant({ 
+  baseUrl, 
+  apiKey = 'NAYAXA-BAPPERIDA-8888-9999-XXXX',
+  user,
+  title,
+  subtitle
+}: NayaxaAssistantProps) {
   const [messages, setMessages] = useState<any[]>([]);
   const [inputVal, setInputVal] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -22,7 +34,12 @@ export default function NayaxaAssistant() {
   const [thinkTime, setThinkTime] = useState(0);
   const [selectedFiles, setSelectedFiles] = useState<{ base64: string, mimeType: string, name: string, action?: string }[]>([]);
   
-  const api = createNayaxaApi(`http://${window.location.hostname}:6001/api/nayaxa`, API_KEY); 
+  const api = createNayaxaApi(
+    baseUrl || (window.location.hostname === 'localhost' 
+      ? `http://localhost:6001` 
+      : `https://api-nayaxa.bapperida-ppm.my.id`), 
+    apiKey
+  ); 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -97,6 +114,24 @@ export default function NayaxaAssistant() {
     setThinkTime(0);
     setShowThought(true);
 
+    // Base URL configuration for API calls
+    const baseUrl = window.location.hostname === 'localhost' 
+      ? 'http://localhost:6001' 
+      : 'https://api-nayaxa.bapperida-ppm.my.id';
+
+    const fixLocalhostLinks = (text: string) => {
+      if (!text || window.location.hostname === 'localhost') return text;
+      
+      // Ganti semua yang pakai domain:6001 menjadi subdomain resmi
+      // Kita arahkan ke root subdomain karena Nginx sekarang sudah jadi "pipa lurus"
+      let cleaned = text.replace(/http:\/\/[^/]+:6001/g, 'https://api-nayaxa.bapperida-ppm.my.id');
+      
+      // Jaga-jaga jika ada localhost:6001 tanpa http
+      cleaned = cleaned.replace(/localhost:6001/g, 'api-nayaxa.bapperida-ppm.my.id');
+      
+      return cleaned;
+    };
+
     api.chatStream({
       message: msg,
       session_id: sessionId,
@@ -107,13 +142,14 @@ export default function NayaxaAssistant() {
       if (event === 'step') {
         setCurrentSteps(prev => [...prev, data]);
       } else if (event === 'message') {
-        setCurrentResponse(prev => prev + data.text);
+        setCurrentResponse(prev => prev + fixLocalhostLinks(data.text));
       } else if (event === 'thought') {
           setThought(prev => prev + data.text);
       } else if (event === 'done') {
+        const cleanedText = fixLocalhostLinks(data.text);
         setMessages(prev => [...prev, { 
           role: 'model', 
-          content: data.text, 
+          content: cleanedText, 
           brain_used: data.brain_used,
           steps: currentSteps,
           thought: thought,
@@ -385,5 +421,6 @@ export default function NayaxaAssistant() {
         </motion.button>
       </div>
     </div>
+  </div>
   );
 }

@@ -7,7 +7,11 @@ const app = express();
 const PORT = process.env.PORT || 6001;
 
 // Basic security and parsing
-app.use(cors()); // In production, restrict to dashboard origins
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key']
+}));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -23,15 +27,7 @@ app.get('/health', (req, res) => {
 
 // Primary Nayaxa Routes
 const nayaxaRoutes = require('./routes/nayaxaRoutes');
-app.use('/api/nayaxa', nayaxaRoutes);
-
-// Serve Static Files (AI Reports & Exports)
-const path = require('path');
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
-
-// Bridge to Dashboard Uploads (For user-uploaded documents)
-const DASHBOARD_UPLOADS = 'D:/copy-dashboard/Backend/uploads';
-app.use('/uploads/dashboard', express.static(DASHBOARD_UPLOADS));
+app.use('/', nayaxaRoutes);
 
 const server = app.listen(PORT, () => {
     console.log(`=========================================`);

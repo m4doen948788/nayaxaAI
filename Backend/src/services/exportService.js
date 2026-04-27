@@ -66,7 +66,7 @@ const exportService = {
         const safe = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
         const p = path.join(EXPORT_DIR, safe);
         await workbook.xlsx.writeFile(p);
-        return `/api/nayaxa/export/${safe}`;
+        return `/export/${safe}`;
     },
 
     generatePDF: async (content, filename = 'laporan.pdf') => {
@@ -128,7 +128,7 @@ const exportService = {
             }
 
             doc.end();
-            s.on('finish', () => resolve(`/api/nayaxa/export/${safe}`));
+            s.on('finish', () => resolve(`/export/${safe}`));
             s.on('error', reject);
         });
     },
@@ -389,7 +389,7 @@ const exportService = {
         const p = path.join(EXPORT_DIR, safe);
         const b = await Packer.toBuffer(doc);
         fs.writeFileSync(p, b);
-        return `/api/nayaxa/export/${safe}`;
+        return `/export/${safe}`;
     },
 
     fillExcelTemplate: async (base64Input, filledData, filename = 'filled_template.xlsx') => {
@@ -489,7 +489,7 @@ const exportService = {
             const safe = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
             const p = path.join(EXPORT_DIR, safe);
             await workbook.xlsx.writeFile(p);
-            return `/api/nayaxa/export/${safe}`;
+            return `/export/${safe}`;
         } catch (err) {
             console.error("Excel Fill Template Error:", err);
             throw new Error(`Gagal mengisi template Excel: ${err.message}`);

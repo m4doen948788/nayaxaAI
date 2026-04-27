@@ -653,7 +653,8 @@ ${lastActivityContext ? `\nKONTEKS AKTIVITAS: "${lastActivityContext}"\nSapa use
                         let res = await toolFunctions[call.name]({ ...call.args, instansi_id, month, year }, { baseUrl, excelBase64, app_id: 1 });
                         
                         if (res.success && res.download_url) {
-                            generatedDocLinks.push({ url: res.download_url, name: call.args.filename || call.args.judul || "Dokumen" });
+                            const actualFileName = res.download_url.split('/').pop();
+                            generatedDocLinks.push({ url: res.download_url, name: actualFileName || call.args.filename || "Dokumen" });
                         }
 
                         if (call.name === 'generate_chart' && res.success) {

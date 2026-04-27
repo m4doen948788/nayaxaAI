@@ -530,7 +530,7 @@ const nayaxaStandalone = {
                 id: r.id,
                 type: 'FILE',
                 title: r.nama_file,
-                url: r.path,
+                url: `/uploads/dashboard/${r.path.replace(/^\/uploads\//, '')}`,
                 category: r.tematik || 'Umum',
                 details: `Kategori: ${r.tematik || 'Umum'}, Ukuran: ${(r.ukuran / 1024 / 1024).toFixed(2)} MB, Uploaded: ${new Date(r.uploaded_at).toLocaleDateString('id-ID')}`
             }));

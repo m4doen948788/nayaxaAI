@@ -3,9 +3,24 @@ const router = express.Router();
 const nayaxaController = require('../controllers/nayaxaController');
 const nayaxaKnowledgeController = require('../controllers/nayaxaKnowledgeController');
 const { verifyApiKey } = require('../middleware/apiKeyMiddleware');
+const path = require('path');
+const expressStatic = express.static;
+
+// Path definitions
+const UPLOAD_PATH = path.join(__dirname, '../../uploads');
+const DASHBOARD_UPLOADS = path.join(__dirname, '../../../../copy-dashboard/Backend/uploads');
 
 // Public Export Download (For chat links)
 router.get('/export/:filename', nayaxaController.downloadExport);
+
+// Public Static Files (For previews in iframes/links)
+router.use('/uploads/dashboard', expressStatic(DASHBOARD_UPLOADS));
+router.use('/uploads', expressStatic(UPLOAD_PATH));
+
+// Catch-all for missing files in /uploads to prevent hitting auth middleware
+router.use(['/uploads', '/uploads/dashboard'], (req, res) => {
+    res.status(404).json({ success: false, message: 'File tidak ditemukan di server.' });
+});
 
 // All other routes require an API Key
 router.use(verifyApiKey);

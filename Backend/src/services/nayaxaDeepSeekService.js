@@ -838,7 +838,8 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                             res = await toolFunctions[fn]({ ...args, instansi_id, month, year }, { excelBase64, baseUrl, session_id, signal });
                             
                             if (res.success && res.download_url) {
-                                generatedDocLinks.push({ url: res.download_url, name: args.filename || args.judul || "Dokumen" });
+                                const actualFileName = res.download_url.split('/').pop();
+                                generatedDocLinks.push({ url: res.download_url, name: actualFileName || args.filename || "Dokumen" });
                             }
                         } catch (toolErr) {
                             console.error(`[DeepSeek_Parallel_Error] ${fn}:`, toolErr);
@@ -909,7 +910,7 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                         if (isDashboardUpload) {
                             finalUrl = `${baseUrl}/uploads/dashboard/${fileNameOnly}`;
                         } else if (finalUrl.includes('export/')) {
-                            finalUrl = `${baseUrl}/api/nayaxa/export/${fileNameOnly}`;
+                            finalUrl = `${baseUrl}/export/${fileNameOnly}`;
                         } else {
                             finalUrl = `${baseUrl}/uploads/${fileNameOnly}`;
                         }

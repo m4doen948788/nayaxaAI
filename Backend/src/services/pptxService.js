@@ -123,7 +123,7 @@ class PptxService {
         // Return URL in system-standard /api/nayaxa/export/ format
         return {
             fileName,
-            url: `/api/nayaxa/export/${fileName}`
+            url: `/export/${fileName}`
         };
     }
 

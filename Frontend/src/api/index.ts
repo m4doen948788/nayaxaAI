@@ -1,6 +1,8 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:6001/api/nayaxa';
+const API_BASE_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? `http://${window.location.hostname}:6001`
+  : 'https://api-nayaxa.bapperida-ppm.my.id';
 
 export const createNayaxaApi = (apiKey: string) => {
   const client = axios.create({
