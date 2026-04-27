@@ -14,11 +14,12 @@ const DASHBOARD_UPLOADS = path.join(__dirname, '../../../../copy-dashboard/Backe
 router.get('/export/:filename', nayaxaController.downloadExport);
 
 // Public Static Files (For previews in iframes/links)
+// Public Routes for Static Files (Dashboard Uploads & System Uploads)
 router.use('/uploads/dashboard', expressStatic(DASHBOARD_UPLOADS));
 router.use('/uploads', expressStatic(UPLOAD_PATH));
 
-// Catch-all for missing files in /uploads to prevent hitting auth middleware
-router.use(['/uploads', '/uploads/dashboard'], (req, res) => {
+// Catch-all for any missing files in /uploads to prevent falling through to verifyApiKey
+router.all('/uploads/*', (req, res) => {
     res.status(404).json({ success: false, message: 'File tidak ditemukan di server.' });
 });
 
