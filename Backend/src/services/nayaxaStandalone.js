@@ -290,15 +290,27 @@ const nayaxaStandalone = {
             return _nayaxaCache.glossary.data;
         }
         try {
-            const [bidang] = await pool.query('SELECT nama_bidang, singkatan FROM master_bidang_instansi');
-            const [instansi] = await pool.query('SELECT instansi, singkatan FROM master_instansi_daerah');
-            const [tipe] = await pool.query('SELECT kode, nama FROM master_tipe_kegiatan');
+            const [bidang] = await pool.query('SELECT id, nama_bidang, singkatan FROM master_bidang_instansi');
+            const [instansi] = await pool.query('SELECT id, instansi, singkatan FROM master_instansi_daerah');
+            const [tipe] = await pool.query('SELECT id, kode, nama FROM master_tipe_kegiatan');
+            const [jabatan] = await pool.query('SELECT id, jabatan FROM master_jabatan');
+            const [pangkat] = await pool.query('SELECT id, pangkat_golongan FROM master_pangkat_golongan');
+            const [tipeUser] = await pool.query('SELECT id, tipe_user FROM master_tipe_user');
             
-            const glossaryBidang = bidang.map(b => b.singkatan ? `${b.nama_bidang} (${b.singkatan})` : b.nama_bidang).join(', ');
-            const glossaryInstansi = instansi.map(i => i.singkatan ? `${i.instansi} (${i.singkatan})` : i.instansi).join(', ');
-            const glossaryTipe = tipe.map(t => `${t.kode} (${t.nama})`).join(', ');
+            const glossaryBidang = bidang.map(b => `${b.nama_bidang}${b.singkatan ? ` (${b.singkatan})` : ''} [ID: ${b.id}]`).join(', ');
+            const glossaryInstansi = instansi.map(i => `${i.instansi}${i.singkatan ? ` (${i.instansi})` : ''} [ID: ${i.id}]`).join(', ');
+            const glossaryTipe = tipe.map(t => `${t.kode} (${t.nama}) [ID: ${t.id}]`).join(', ');
+            const glossaryJabatan = jabatan.map(j => `${j.jabatan} [ID: ${j.id}]`).join(', ');
+            const glossaryPangkat = pangkat.map(p => `${p.pangkat_golongan} [ID: ${p.id}]`).join(', ');
+            const glossaryTipeUser = tipeUser.map(t => `${t.tipe_user} [ID: ${t.id}]`).join(', ');
             
-            const s = `GLOSARIUM RESMI:\n- DAFTAR INSTANSI: ${glossaryInstansi}\n- DAFTAR BIDANG: ${glossaryBidang}\n- DEFINISI KODE KEGIATAN: ${glossaryTipe}`;
+            const s = `GLOSARIUM RESMI:
+- DAFTAR INSTANSI (Gunakan ID untuk kueri): ${glossaryInstansi}
+- DAFTAR BIDANG (Gunakan ID untuk kueri): ${glossaryBidang}
+- DAFTAR JABATAN: ${glossaryJabatan}
+- DAFTAR PANGKAT/GOLONGAN: ${glossaryPangkat}
+- DAFTAR TIPE USER: ${glossaryTipeUser}
+- DEFINISI KODE KEGIATAN: ${glossaryTipe}`;
             
             _nayaxaCache.glossary.data = s;
             _nayaxaCache.glossary.ts = now;

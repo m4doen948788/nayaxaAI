@@ -11,7 +11,7 @@ const pdf = require('pdf-parse');
 const insightsCache = new Map();
 const chatResponseCache = new Map();
 
-// 20-Request Concurrent Queue System
+// 20-Request Concurrent Queue System (Glossary expanded at 11:11)
 let activeRequests = 0;
 const requestQueue = [];
 const MAX_CONCURRENT = 20;
@@ -277,6 +277,8 @@ const nayaxaController = {
 
             // 4. Save & Cache Response
             const contentToSave = responseText
+                .replace(/<thought>[\s\S]*?<\/thought>/gi, '')
+                .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
                 .replace(/\[NAYAXA_CHART\][\s\S]*?\[\/NAYAXA_CHART\]/g, '[Grafik]')
                 .replace(/\[ACTION:REQUEST_LOCATION\]/g, '');
             await dbNayaxa.query(
@@ -418,13 +420,46 @@ const nayaxaController = {
             }
 
             // Step callback: fire SSE event for each tool step or thought chunk
+            let isInsideThought = false;
             const onStepCallback = (data) => {
                 if (data.type === 'thought') {
                     sendEvent('thought', { text: data.text });
                 } else if (data.type === 'message_chunk') {
+                    let chunk = data.text;
+                    
+                    // --- NARRATIVE REDIRECTION ---
+                    // If chunk contains <thought> or we are inside a manual thought block
+                    if (chunk.includes('<thought>')) {
+                        isInsideThought = true;
+                        const [before, after] = chunk.split('<thought>');
+                        if (before) sendEvent('message', { text: before });
+                        if (after) {
+                             if (after.includes('</thought>')) {
+                                 const [thoughtText, remaining] = after.split('</thought>');
+                                 sendEvent('thought', { text: thoughtText });
+                                 isInsideThought = false;
+                                 if (remaining) onStepCallback({ type: 'message_chunk', text: remaining });
+                             } else {
+                                 sendEvent('thought', { text: after });
+                             }
+                        }
+                        return;
+                    }
+                    
+                    if (isInsideThought) {
+                        if (chunk.includes('</thought>')) {
+                            const [thoughtText, remaining] = chunk.split('</thought>');
+                            sendEvent('thought', { text: thoughtText });
+                            isInsideThought = false;
+                            if (remaining) onStepCallback({ type: 'message_chunk', text: remaining });
+                        } else {
+                            sendEvent('thought', { text: chunk });
+                        }
+                        return;
+                    }
+
                     // --- REAL-TIME STREAMING FILTER ---
                     // Strip technical leaks immediately before sending to frontend
-                    let chunk = data.text;
                     if (chunk.includes('<') || chunk.includes('|') || chunk.includes('DSML')) {
                         chunk = chunk.replace(/<\|[\s\S]*?\|>/g, '')
                                      .replace(/<[\s\S]*?DSML[\s\S]*?>/gi, '')
@@ -527,6 +562,8 @@ const nayaxaController = {
 
             // Save response
             const contentToSave = responseText
+                .replace(/<thought>[\s\S]*?<\/thought>/gi, '')
+                .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
                 .replace(/\[NAYAXA_CHART\][\s\S]*?\[\/NAYAXA_CHART\]/g, '[Grafik]')
                 .replace(/\[ACTION:REQUEST_LOCATION\]/g, '');
             await dbNayaxa.query(
@@ -537,6 +574,8 @@ const nayaxaController = {
             // Send final response
             // --- CENTRALIZED CLEANUP ---
             // Remove any leaked technical tags or DSML robot-speak
+            responseText = responseText.replace(/<thought>[\s\S]*?<\/thought>/gi, '');
+            responseText = responseText.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
             responseText = responseText.replace(/<\|[\s\S]*?\|>/g, '');
             responseText = responseText.replace(/<[\s\S]*?DSML[\s\S]*?>/gi, '');
             responseText = responseText.replace(/<[\s\S]*?function_calls[\s\S]*?>/gi, '');
