@@ -8,7 +8,10 @@ const expressStatic = express.static;
 
 // Path definitions
 const UPLOAD_PATH = path.join(__dirname, '../../uploads');
-const DASHBOARD_UPLOADS = path.join(__dirname, '../../../../dashboard-ppm/Backend/uploads');
+const isLocal = process.platform === 'win32';
+const DASHBOARD_UPLOADS = isLocal 
+    ? path.join(__dirname, '../../../../copy-dashboard/Backend/uploads')
+    : path.join(__dirname, '../../../../dashboard-ppm/Backend/uploads');
 
 // Public Export Download (For chat links)
 router.get('/export/:filename', nayaxaController.downloadExport);

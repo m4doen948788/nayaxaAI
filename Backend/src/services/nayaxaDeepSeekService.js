@@ -795,7 +795,7 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                 // If truncated, we just push the current content as assistant message and continue
                 // If tool calls, we push tools
                 if (combinedToolCalls.length > 0) {
-                    messages.push({
+                    const assistantMsg = {
                         role: "assistant",
                         content: messageContent || null,
                         tool_calls: combinedToolCalls.map(tc => ({
@@ -806,7 +806,14 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                                 arguments: tc.function.arguments
                             }
                         }))
-                    });
+                    };
+                    
+                    // V4 Requirement: Must pass back reasoning_content if it exists
+                    if (currentThought) {
+                        assistantMsg.reasoning_content = currentThought;
+                    }
+                    
+                    messages.push(assistantMsg);
 
                     // --- PARALLEL TURBO EXECUTION ---
                     const toolPromises = combinedToolCalls.map(async (call) => {
@@ -930,7 +937,14 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
             if (generatedChartMarkers.length > 0) text += "\n\n" + generatedChartMarkers.join("\n\n");
             return text;
         } catch (error) {
-            console.error('DeepSeek API Error:', error.response?.data || error.message);
+            console.error('DeepSeek API Error:', error.message);
+            if (error.response?.data?.on) {
+                error.response.data.on('data', chunk => {
+                    console.error('DeepSeek 400 Detail:', chunk.toString());
+                });
+            } else if (error.response?.data) {
+                console.error('DeepSeek 400 Detail:', JSON.stringify(error.response.data));
+            }
             
             // Re-throw critical errors for the controller's fallback mechanism
             if (error.message === "MAX_INTERACTION_LOOP_REACHED" || error.response?.status === 429 || error.message?.includes('429')) {
