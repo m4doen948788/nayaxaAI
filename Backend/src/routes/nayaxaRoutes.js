@@ -8,7 +8,7 @@ const expressStatic = express.static;
 
 // Path definitions
 const UPLOAD_PATH = path.join(__dirname, '../../uploads');
-const DASHBOARD_UPLOADS = path.join(__dirname, '../../../../copy-dashboard/Backend/uploads');
+const DASHBOARD_UPLOADS = path.join(__dirname, '../../../../dashboard-ppm/Backend/uploads');
 
 // Public Export Download (For chat links)
 router.get('/export/:filename', nayaxaController.downloadExport);
@@ -18,8 +18,15 @@ router.get('/export/:filename', nayaxaController.downloadExport);
 router.use('/uploads/dashboard', expressStatic(DASHBOARD_UPLOADS));
 router.use('/uploads', expressStatic(UPLOAD_PATH));
 
+// Fallback for NGINX proxies that don't strip /api/nayaxa prefix
+router.use('/api/nayaxa/uploads/dashboard', expressStatic(DASHBOARD_UPLOADS));
+router.use('/api/nayaxa/uploads', expressStatic(UPLOAD_PATH));
+
 // Catch-all for any missing files in /uploads to prevent falling through to verifyApiKey
 router.all('/uploads/*', (req, res) => {
+    res.status(404).json({ success: false, message: 'File tidak ditemukan di server.' });
+});
+router.all('/api/nayaxa/uploads/*', (req, res) => {
     res.status(404).json({ success: false, message: 'File tidak ditemukan di server.' });
 });
 
