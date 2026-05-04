@@ -703,7 +703,7 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
             // --- STREAMING-ENABLED API CALL ---
             const callDeepSeekStream = async (msgs, isToolLoop = false) => {
                 const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-                    model: "deepseek-chat", // Menggunakan DeepSeek-V3 (Chat) yang sangat murah dan cepat
+                    model: "deepseek-v4-flash", // Menggunakan DeepSeek V4 Flash sesuai permintaan user (Hemat Biaya)
                     messages: msgs,
                     tools: !isToolLoop ? activeTools : undefined, // Tools only on first turn or as needed
                     temperature: 0.1,
