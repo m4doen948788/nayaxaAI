@@ -1,201 +1,180 @@
 /**
- * NAYAXA DB MIGRATION SCRIPT (PHASE 1)
- * This script sets up the new nayaxa_db and migrates data from the dashboard DB.
+ * Nayaxa Engine - Migration Runner
+ * Menjalankan semua migrasi database yang dibutuhkan Nayaxa Engine
+ * Aman untuk dijalankan berulang kali (idempotent)
+ * 
+ * Usage: node migrate.js
  */
-const mysql = require('mysql2/promise');
-require('dotenv').config();
+const dbNayaxa = require('./src/config/dbNayaxa');
+const dbDashboard = require('./src/config/dbDashboard');
 
 async function migrate() {
-    const connection = await mysql.createConnection({
-        host: process.env.NAYAXA_DB_HOST,
-        user: process.env.NAYAXA_DB_USER,
-        password: process.env.NAYAXA_DB_PASSWORD
-    });
+    console.log('\n🚀 [Nayaxa Migration Runner] Memulai sinkronisasi database...\n');
 
-    console.log('--- NAYAXA DB MIGRATION START ---');
+    const migrations = [
+        // ────────────────────────────────────────────────
+        // DATABASE: Nayaxa (nayaxa_*)
+        // ────────────────────────────────────────────────
+        {
+            name: 'nayaxa_api_keys',
+            db: dbNayaxa,
+            sql: `
+                CREATE TABLE IF NOT EXISTS nayaxa_api_keys (
+                    id         INT AUTO_INCREMENT PRIMARY KEY,
+                    app_name   VARCHAR(255) NOT NULL,
+                    api_key    VARCHAR(255) NOT NULL UNIQUE,
+                    is_active  TINYINT(1) DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            `
+        },
+        {
+            name: 'nayaxa_chat_history',
+            db: dbNayaxa,
+            sql: `
+                CREATE TABLE IF NOT EXISTS nayaxa_chat_history (
+                    id         INT AUTO_INCREMENT PRIMARY KEY,
+                    session_id VARCHAR(50),
+                    user_id    INT,
+                    role       ENUM('user','model') NOT NULL,
+                    content    LONGTEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX (session_id),
+                    INDEX (user_id)
+                )
+            `
+        },
+        {
+            name: 'nayaxa_knowledge',
+            db: dbNayaxa,
+            sql: `
+                CREATE TABLE IF NOT EXISTS nayaxa_knowledge (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    title       VARCHAR(255) NOT NULL,
+                    content     LONGTEXT NOT NULL,
+                    tags        VARCHAR(500),
+                    created_by  INT,
+                    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                )
+            `
+        },
+        {
+            name: 'nayaxa_user_personas',
+            db: dbNayaxa,
+            sql: `
+                CREATE TABLE IF NOT EXISTS nayaxa_user_personas (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id     INT NOT NULL UNIQUE,
+                    user_name   VARCHAR(255),
+                    persona_text TEXT,
+                    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX (user_id)
+                )
+            `
+        },
+        {
+            name: 'nayaxa_pinned_sessions',
+            db: dbNayaxa,
+            sql: `
+                CREATE TABLE IF NOT EXISTS nayaxa_pinned_sessions (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    app_id      INT NOT NULL DEFAULT 1,
+                    user_id     INT NOT NULL,
+                    session_id  VARCHAR(50) NOT NULL,
+                    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_pin (user_id, session_id),
+                    INDEX (user_id),
+                    INDEX (session_id)
+                )
+            `
+        },
+        {
+            name: 'nayaxa_mind_logs',
+            db: dbNayaxa,
+            sql: `
+                CREATE TABLE IF NOT EXISTS nayaxa_mind_logs (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    task_name   VARCHAR(255),
+                    status      VARCHAR(50),
+                    message     TEXT,
+                    started_at  DATETIME,
+                    finished_at DATETIME
+                )
+            `
+        },
+        {
+            name: 'nayaxa_code_proposals',
+            db: dbNayaxa,
+            sql: `
+                CREATE TABLE IF NOT EXISTS nayaxa_code_proposals (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    session_id  VARCHAR(50),
+                    user_id     INT,
+                    file_path   VARCHAR(500),
+                    original    LONGTEXT,
+                    proposed    LONGTEXT,
+                    status      ENUM('pending','applied','rejected') DEFAULT 'pending',
+                    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX (session_id)
+                )
+            `
+        },
 
-    const DASHBOARD_DB = process.env.DASHBOARD_DB_NAME;
-    const NAYAXA_DB = process.env.NAYAXA_DB_NAME;
-
-    try {
-        // 1. Create Database (Catch error if no permission to create)
-        try {
-            await connection.query(`CREATE DATABASE IF NOT EXISTS ${NAYAXA_DB}`);
-            console.log(`[1] Database ${NAYAXA_DB} created/ready.`);
-        } catch (dbErr) {
-            console.warn(`[!] Note: Could not create database ${NAYAXA_DB}. Proceeding with assuming it exists or using the same DB.`);
+        // ────────────────────────────────────────────────
+        // DATABASE: Dashboard (kolom tambahan di tabel shared)
+        // ────────────────────────────────────────────────
+        {
+            name: 'dokumen_upload.is_indexed',
+            db: dbDashboard,
+            alterSql: `ALTER TABLE dokumen_upload ADD COLUMN is_indexed TINYINT(1) DEFAULT 0`,
+            ignoreCodes: ['ER_DUP_FIELDNAME', 'ER_DUP_COLUMN_NAME', 'ER_NO_SUCH_TABLE']
         }
-        
-        await connection.query(`USE ${NAYAXA_DB}`);
-        console.log(`[1] Using database ${NAYAXA_DB}.`);
+    ];
 
-        // 2. Create API Keys Table
-        await connection.query(`
-            CREATE TABLE IF NOT EXISTS nayaxa_api_keys (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                app_name VARCHAR(100) NOT NULL,
-                api_key VARCHAR(64) NOT NULL UNIQUE,
-                instansi_id INT DEFAULT NULL,
-                allowed_tools JSON DEFAULT NULL,
-                is_active TINYINT(1) DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-        console.log(`[2] Table nayaxa_api_keys created.`);
-        
-        // 2b. Create Gemini API Keys Table
-        await connection.query(`
-            CREATE TABLE IF NOT EXISTS gemini_api_keys (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                api_key VARCHAR(128) NOT NULL UNIQUE,
-                is_active TINYINT(1) DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-        console.log(`[2b] Table gemini_api_keys created.`);
-        
-        // Sync Gemini Key from .env to DB
-        if (process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.includes('AIzaSyBznt86')) {
-            await connection.query('TRUNCATE TABLE gemini_api_keys');
-            await connection.query('INSERT INTO gemini_api_keys (api_key) VALUES (?)', [process.env.GEMINI_API_KEY]);
-            console.log(`[2c] Gemini API Key synced from .env to database.`);
+    let success = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    for (const m of migrations) {
+        try {
+            if (m.sql) {
+                await m.db.query(m.sql);
+                console.log(`  ✅ ${m.name}`);
+                success++;
+            } else if (m.alterSql) {
+                await m.db.query(m.alterSql);
+                console.log(`  ✅ ${m.name} (kolom ditambahkan)`);
+                success++;
+            }
+        } catch (e) {
+            const ignorable = m.ignoreCodes || [];
+            if (ignorable.includes(e.code)) {
+                console.log(`  ℹ️  ${m.name} (sudah ada, dilewati)`);
+                skipped++;
+            } else {
+                console.error(`  ❌ ${m.name}: ${e.message}`);
+                failed++;
+            }
         }
+    }
 
-        // 3. Insert Initial API Key for Bapperida Dashboard
-        const [existingKeys] = await connection.query('SELECT * FROM nayaxa_api_keys WHERE app_name = ?', ['dashboard_bapperida']);
-        if (existingKeys.length === 0) {
-            await connection.query(`
-                INSERT INTO nayaxa_api_keys (app_name, api_key)
-                VALUES ('dashboard_bapperida', 'NAYAXA-BAPPERIDA-8888-9999-XXXX')
-            `);
-            console.log(`[3] Initial API Key inserted for Dashboard Bapperida.`);
-        }
+    console.log('\n══════════════════════════════════════════');
+    console.log(`🏁 Nayaxa Migration Selesai`);
+    console.log(`  ✅ Berhasil : ${success}`);
+    console.log(`  ℹ️  Dilewati : ${skipped}`);
+    console.log(`  ❌ Gagal    : ${failed}`);
+    console.log('══════════════════════════════════════════\n');
 
-        // 4. Create Chat History Table (with app_id)
-        await connection.query(`
-            CREATE TABLE IF NOT EXISTS nayaxa_chat_history (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                app_id INT NOT NULL,
-                user_id INT NOT NULL,
-                session_id VARCHAR(50) NOT NULL,
-                role VARCHAR(20) NOT NULL,
-                content TEXT,
-                brain_used VARCHAR(50) DEFAULT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                INDEX (session_id),
-                INDEX (user_id),
-                INDEX (app_id)
-            )
-        `);
-        
-        // Ensure app_id column exists if table was pre-existing
-        try {
-            const [columns] = await connection.query(`SHOW COLUMNS FROM nayaxa_chat_history`);
-            if (!columns.map(c => c.Field).includes('app_id')) {
-                await connection.query(`ALTER TABLE nayaxa_chat_history ADD COLUMN app_id INT NOT NULL AFTER id`);
-                await connection.query(`ALTER TABLE nayaxa_chat_history ADD INDEX (app_id)`);
-                console.log(`[4] Column app_id added to existing nayaxa_chat_history.`);
-            }
-        } catch (colErr) { console.error('Error ensuring app_id column:', colErr); }
-        
-        console.log(`[4] Table nayaxa_chat_history is ready.`);
-
-        // 5. Create Knowledge Table
-        await connection.query(`
-            CREATE TABLE IF NOT EXISTS nayaxa_knowledge (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                app_id INT DEFAULT 1,
-                category VARCHAR(100),
-                content TEXT NOT NULL,
-                source_file VARCHAR(255),
-                is_active TINYINT(1) DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                INDEX (app_id)
-            )
-        `);
-        
-        // Ensure new columns exist if table was pre-existing
-        try {
-            const [columns] = await connection.query(`SHOW COLUMNS FROM nayaxa_knowledge`);
-            const colNames = columns.map(c => c.Field);
-            
-            if (colNames.includes('feature_name') && !colNames.includes('category')) {
-                await connection.query(`ALTER TABLE nayaxa_knowledge CHANGE COLUMN feature_name category VARCHAR(255)`);
-                console.log(`[5] Column feature_name renamed to category.`);
-            }
-            if (colNames.includes('description') && !colNames.includes('content')) {
-                await connection.query(`ALTER TABLE nayaxa_knowledge CHANGE COLUMN description content TEXT`);
-                console.log(`[5] Column description renamed to content.`);
-            }
-            if (!colNames.includes('app_id')) {
-                await connection.query(`ALTER TABLE nayaxa_knowledge ADD COLUMN app_id INT DEFAULT 1 AFTER id`);
-                await connection.query(`ALTER TABLE nayaxa_knowledge ADD INDEX (app_id)`);
-                console.log(`[5] Column app_id added to nayaxa_knowledge.`);
-            }
-            if (!colNames.includes('source_file')) {
-                await connection.query(`ALTER TABLE nayaxa_knowledge ADD COLUMN source_file VARCHAR(255) AFTER content`);
-                console.log(`[5] Column source_file added to nayaxa_knowledge.`);
-            }
-        } catch (colErr) { console.error('Error ensuring nayaxa_knowledge columns:', colErr); }
-
-        console.log(`[5] Table nayaxa_knowledge is ready.`);
-        
-        // 5b. Create Code Proposals Table
-        await connection.query(`
-            CREATE TABLE IF NOT EXISTS nayaxa_code_proposals (
-                id VARCHAR(50) PRIMARY KEY,
-                session_id VARCHAR(50) NOT NULL,
-                files JSON NOT NULL,
-                status ENUM('pending', 'accepted', 'rejected') DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                INDEX (session_id)
-            )
-        `);
-        console.log(`[5b] Table nayaxa_code_proposals created.`);
-
-        // 6. Migrate Data from Dashboard DB (If tables exist there)
-        console.log(`[6] Checking for legacy data in ${DASHBOARD_DB}...`);
-        
-        try {
-            const [history] = await connection.query(`SELECT * FROM ${DASHBOARD_DB}.nayaxa_chat_history`);
-            if (history.length > 0) {
-                console.log(`Found ${history.length} legacy chat history rows. Migrating...`);
-                // Get the app_id we just created
-                const [app] = await connection.query('SELECT id FROM nayaxa_api_keys WHERE app_name = ?', ['dashboard_bapperida']);
-                const appId = app[0].id;
-
-                for (const h of history) {
-                    await connection.query(
-                        `INSERT IGNORE INTO nayaxa_chat_history (app_id, user_id, session_id, role, content, brain_used, created_at) 
-                         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                        [appId, h.user_id, h.session_id || 'default', h.role, h.content, h.brain_used, h.created_at]
-                    );
-                }
-                console.log('Chat history migration complete.');
-            }
-        } catch (e) { console.log('No legacy chat history found to migrate.'); }
-
-        try {
-            const [knowledge] = await connection.query(`SELECT * FROM ${DASHBOARD_DB}.nayaxa_knowledge`);
-            if (knowledge.length > 0) {
-                console.log(`Found ${knowledge.length} legacy knowledge rows. Migrating...`);
-                for (const k of knowledge) {
-                    await connection.query(
-                        `INSERT IGNORE INTO nayaxa_knowledge (feature_name, description, is_active, created_at) 
-                         VALUES (?, ?, ?, ?)`,
-                        [k.feature_name, k.description, k.is_active, k.created_at]
-                    );
-                }
-                console.log('Knowledge migration complete.');
-            }
-        } catch (e) { console.log('No legacy knowledge found to migrate.'); }
-
-        console.log('--- NAYAXA DB MIGRATION FINISHED SUCCESSFULLY ---');
-    } catch (error) {
-        console.error('Migration Failed:', error);
-    } finally {
-        await connection.end();
+    if (failed > 0) {
+        process.exit(1);
+    } else {
+        process.exit(0);
     }
 }
 
-migrate();
+migrate().catch(e => {
+    console.error('Fatal error:', e);
+    process.exit(1);
+});
