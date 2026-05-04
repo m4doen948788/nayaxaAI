@@ -3,10 +3,16 @@ const dbNayaxa = require('../config/dbNayaxa');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const mammoth = require('mammoth');
 const XLSX = require('xlsx');
+const pdf = require('pdf-parse');
 const fs = require('fs');
 const path = require('path');
 const knowledgeTool = require('./knowledgeTool');
 const nayaxaStandalone = require('./nayaxaStandalone');
+
+const isLocal = process.platform === 'win32';
+const DASHBOARD_UPLOADS = isLocal 
+    ? path.join(__dirname, '../../../../copy-dashboard/Backend/uploads')
+    : path.join(__dirname, '../../../../dashboard-ppm/Backend/uploads');
 
 /**
  * Get the primary Gemini API key from DB
@@ -19,6 +25,33 @@ const getApiKey = async () => {
         console.error('[Mind] Error fetching API Key:', err);
     }
     return process.env.GEMINI_API_KEY;
+};
+
+/**
+ * Get DeepSeek API Key
+ */
+const getDeepSeekKey = () => process.env.NAYAXA_DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY;
+
+const axios = require('axios');
+
+const analyzeWithDeepSeek = async (text) => {
+    try {
+        const apiKey = getDeepSeekKey();
+        const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+            model: "deepseek-chat",
+            messages: [
+                { role: "system", content: "Anda adalah analis dokumen Nayaxa. Tugas Anda adalah meringkas isi dokumen secara mendalam (inti sari) untuk memori pengetahuan jangka panjang. Fokus pada fakta, angka, dan aturan penting. Gunakan bahasa Indonesia yang formal dan profesional." },
+                { role: "user", content: `Ringkas isi dokumen berikut untuk memori Nayaxa Intelligence: \n\n${text.substring(0, 30000)}` }
+            ],
+            temperature: 0.1
+        }, {
+            headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        return response.data.choices[0].message.content;
+    } catch (error) {
+        console.error('[Mind] DeepSeek Analysis Error:', error.message);
+        return null;
+    }
 };
 
 const nayaxaMindService = {
@@ -42,7 +75,9 @@ const nayaxaMindService = {
 
             for (const file of newFiles) {
                 console.log(`[Mind] Learning document: ${file.nama_file}`);
-                const absolutePath = path.join(__dirname, '../../', file.path);
+                // Fix: Point to dashboard uploads folder
+                const fileName = path.basename(file.path);
+                const absolutePath = path.join(DASHBOARD_UPLOADS, fileName);
                 
                 if (!fs.existsSync(absolutePath)) {
                     console.warn(`[Mind] File not found: ${absolutePath}`);
@@ -236,6 +271,128 @@ const nayaxaMindService = {
     },
 
     /**
+     * Helper: Learn a specific document from the dashboard
+     * This is used for on-demand ingestion to save tokens.
+     */
+    analyzeAndIngestDocument: async (fileId, appId = 1) => {
+        try {
+            const [files] = await dbDashboard.query(
+                'SELECT id, nama_file, path FROM dokumen_upload WHERE id = ? AND is_deleted = 0',
+                [fileId]
+            );
+
+            if (files.length === 0) return { success: false, message: "Dokumen tidak ditemukan di database." };
+            const file = files[0];
+
+            console.log(`[Mind] On-demand learning: ${file.nama_file}`);
+            // Fix: Point to dashboard uploads folder
+            const fileName = path.basename(file.path);
+            const absolutePath = path.join(DASHBOARD_UPLOADS, fileName);
+            
+            if (!fs.existsSync(absolutePath)) {
+                return { success: false, message: `File fisik tidak ditemukan: ${file.path}` };
+            }
+
+            const apiKey = await getApiKey();
+            const genAI = new GoogleGenerativeAI(apiKey);
+            const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+            let textContent = "";
+            let summaryContent = "";
+            const ext = path.extname(file.nama_file).toLowerCase();
+
+            // STEP 1: Extract Text or Use Multimodal
+            if (ext === '.docx' || ext === '.doc') {
+                const buffer = fs.readFileSync(absolutePath);
+                const result = await mammoth.convertToHtml({ buffer });
+                textContent = result.value;
+                // Use DeepSeek for Text Summarization
+                summaryContent = await analyzeWithDeepSeek(textContent);
+            } else if (ext === '.xlsx' || ext === '.xls' || ext === '.csv') {
+                const workbook = XLSX.readFile(absolutePath);
+                workbook.SheetNames.forEach(sheetName => {
+                    const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
+                    textContent += `\n--- Sheet: ${sheetName} ---\n${csv}\n`;
+                });
+                // Use DeepSeek for Data Summarization
+                summaryContent = await analyzeWithDeepSeek(textContent);
+            } else if (ext === '.pdf') {
+                const buffer = fs.readFileSync(absolutePath);
+                try {
+                    const pdfData = await pdf(buffer);
+                    const extractedText = pdfData.text?.trim() || '';
+                    
+                    if (extractedText.length > 150) {
+                        // PDF has real text -> Use DeepSeek
+                        console.log(`[Mind] PDF text detected (${extractedText.length} chars). Using DeepSeek.`);
+                        summaryContent = await analyzeWithDeepSeek(extractedText);
+                    } else {
+                        // PDF likely a scan -> Use Gemini Multimodal
+                        console.log(`[Mind] PDF text too short. Using Gemini Multimodal.`);
+                        const base64 = buffer.toString('base64');
+                        const apiKey = await getApiKey();
+                        const genAI = new GoogleGenerativeAI(apiKey);
+                        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+                        const prompt = "Berikan analisis dan ringkasan mendalam (inti sari) dari dokumen ini. Fokus pada fakta, angka, dan aturan penting.";
+                        const result = await model.generateContent([
+                            { text: prompt },
+                            { inlineData: { mimeType: 'application/pdf', data: base64 } }
+                        ]);
+                        summaryContent = result.response.text();
+                    }
+                } catch (pdfErr) {
+                    console.error('[Mind] PDF Parse Error, falling back to Gemini:', pdfErr.message);
+                    // Fallback to Gemini if pdf-parse fails
+                    const base64 = buffer.toString('base64');
+                    const apiKey = await getApiKey();
+                    const genAI = new GoogleGenerativeAI(apiKey);
+                    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+                    const result = await model.generateContent([{ text: "Ringkas dokumen ini:" }, { inlineData: { mimeType: 'application/pdf', data: base64 } }]);
+                    summaryContent = result.response.text();
+                }
+            } else if (ext === '.png' || ext === '.jpg' || ext === '.jpeg') {
+                const buffer = fs.readFileSync(absolutePath);
+                const base64 = buffer.toString('base64');
+                const mimeType = `image/${ext.replace('.','')}`;
+                
+                // Use Gemini for Image Analysis
+                const apiKey = await getApiKey();
+                const genAI = new GoogleGenerativeAI(apiKey);
+                const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+                const prompt = "Berikan analisis dan ringkasan mendalam (inti sari) dari gambar dokumen ini. Fokus pada fakta, angka, dan aturan penting.";
+                const result = await model.generateContent([
+                    { text: prompt },
+                    { inlineData: { mimeType, data: base64 } }
+                ]);
+                summaryContent = result.response.text();
+            } else {
+                textContent = fs.readFileSync(absolutePath, 'utf8');
+                summaryContent = await analyzeWithDeepSeek(textContent);
+            }
+
+            if (summaryContent && summaryContent.trim()) {
+                // Save to Knowledge Base
+                await knowledgeTool.ingestToKnowledge(appId, 'Dashboard Analysis', summaryContent, file.nama_file);
+                
+                // Mark as indexed in dashboard
+                await dbDashboard.query('UPDATE dokumen_upload SET is_indexed = 1 WHERE id = ?', [file.id]);
+
+                return {
+                    success: true,
+                    content: summaryContent,
+                    source: file.nama_file
+                };
+            }
+
+            return { success: false, message: "Gagal mengekstrak teks dari dokumen." };
+        } catch (error) {
+            console.error('[Mind] Single Ingestion Error:', error);
+            return { success: false, error: error.message };
+        }
+    },
+
+    /**
      * Main Initializer
      */
     init: (intervalMinutes = 60) => {
@@ -243,7 +400,7 @@ const nayaxaMindService = {
         
         // Immediate first run (deferred 10sec to let server start)
         setTimeout(async () => {
-            // learnNewDocuments disabled as per user request (focus on DB only)
+            // learnNewDocuments DISABLED to save tokens. Use on-demand ingestion instead.
             // await nayaxaMindService.learnNewDocuments(); 
             await nayaxaMindService.generateSystemSnapshot();
         }, 10000);

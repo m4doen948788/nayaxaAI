@@ -63,7 +63,9 @@ const exportService = {
             worksheet.columns = columns;
             worksheet.addRows(cleanedData);
         }
-        const safe = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
+        // Sanitize filename for URL and filesystem safety
+        const sanitized = filename.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
+        const safe = sanitized.endsWith('.xlsx') ? sanitized : `${sanitized}.xlsx`;
         const p = path.join(EXPORT_DIR, safe);
         await workbook.xlsx.writeFile(p);
         return `/export/${safe}`;
@@ -80,7 +82,9 @@ const exportService = {
                 console.error('[PDF:CRITICAL] Document Error:', err);
                 reject(err);
             });
-            const safe = filename.endsWith('.pdf') ? filename : `${filename}.pdf`;
+            // Sanitize filename
+            const sanitized = filename.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
+            const safe = sanitized.endsWith('.pdf') ? sanitized : `${sanitized}.pdf`;
             const p = path.join(EXPORT_DIR, safe);
             const s = fs.createWriteStream(p);
             
@@ -385,7 +389,8 @@ const exportService = {
                 children: children
             }]
         });
-        const safe = filename.endsWith('.docx') ? filename : `${filename}.docx`;
+        const sanitized = filename.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
+        const safe = sanitized.endsWith('.docx') ? sanitized : `${sanitized}.docx`;
         const p = path.join(EXPORT_DIR, safe);
         const b = await Packer.toBuffer(doc);
         fs.writeFileSync(p, b);
@@ -486,7 +491,8 @@ const exportService = {
                 });
             }
 
-            const safe = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
+            const sanitized = filename.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
+            const safe = sanitized.endsWith('.xlsx') ? sanitized : `${sanitized}.xlsx`;
             const p = path.join(EXPORT_DIR, safe);
             await workbook.xlsx.writeFile(p);
             return `/export/${safe}`;

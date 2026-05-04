@@ -122,12 +122,12 @@ export default function NayaxaAssistant({
     const fixLocalhostLinks = (text: string) => {
       if (!text || window.location.hostname === 'localhost') return text;
       
-      // Ganti semua yang pakai domain:6001 menjadi subdomain resmi
-      // Kita arahkan ke root subdomain karena Nginx sekarang sudah jadi "pipa lurus"
-      let cleaned = text.replace(/http:\/\/[^/]+:6001/g, 'https://api-nayaxa.bapperida-ppm.my.id');
+      // Ganti semua yang pakai localhost atau domain:6001 menjadi subdomain resmi
+      // Regex ini menangkap http://localhost:PORT, https://localhost:PORT, localhost:PORT, dll
+      let cleaned = text.replace(/(https?:\/\/)?localhost(:\d+)?/g, 'https://api-nayaxa.bapperida-ppm.my.id');
       
-      // Jaga-jaga jika ada localhost:6001 tanpa http
-      cleaned = cleaned.replace(/localhost:6001/g, 'api-nayaxa.bapperida-ppm.my.id');
+      // Juga tangkap jika ada IP 127.0.0.1
+      cleaned = cleaned.replace(/(https?:\/\/)?127\.0\.0\.1(:\d+)?/g, 'https://api-nayaxa.bapperida-ppm.my.id');
       
       return cleaned;
     };

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { FileCode, Check, X, ArrowLeft, Loader2, FileText } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface CodeProposalReviewProps {
   proposalId: string;
@@ -61,8 +61,8 @@ export default function CodeProposalReview({ proposalId, api }: CodeProposalRevi
 
   if (loading) {
     return (
-      <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4 flex items-center justify-center min-h-[100px]">
-        <Loader2 className="animate-spin text-indigo-400" size={24} />
+      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex items-center justify-center min-h-[100px]">
+        <Loader2 className="animate-spin text-indigo-600" size={24} />
       </div>
     );
   }
@@ -81,28 +81,28 @@ export default function CodeProposalReview({ proposalId, api }: CodeProposalRevi
     <motion.div 
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-[#1e1e2e] border border-white/10 rounded-2xl overflow-hidden shadow-2xl max-w-full my-4"
+      className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xl max-w-full my-4"
     >
       {/* Header */}
-      <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between text-slate-400">
+      <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between text-slate-500 bg-slate-50/50">
         <div className="flex items-center gap-2">
-            <ArrowLeft size={16} className="cursor-pointer hover:text-white" />
+            <ArrowLeft size={16} className="cursor-pointer hover:text-indigo-600" />
             <FileText size={16} />
-            <span className="text-xs font-medium uppercase tracking-wider">{proposal.files.length} Files Modified</span>
+            <span className="text-xs font-bold uppercase tracking-wider">{proposal.files.length} Files Modified</span>
         </div>
       </div>
 
       {/* File List */}
       <div className="p-2 space-y-1">
         {proposal.files.map((file: any, idx: number) => (
-          <div key={idx} className="flex items-center justify-between p-3 rounded-xl hover:bg-white/5 transition-all group">
+          <div key={idx} className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 transition-all group border border-transparent hover:border-slate-100">
             <div className="flex items-center gap-3 overflow-hidden">
-              <div className="w-8 h-8 rounded-lg bg-orange-500/20 flex items-center justify-center text-orange-400">
-                <div className="w-2 h-2 rounded-full bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.6)]" />
+              <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center text-orange-600">
+                <div className="w-2 h-2 rounded-full bg-orange-500 shadow-lg shadow-orange-600/30" />
               </div>
               <div className="flex flex-col overflow-hidden">
-                <span className="text-sm font-semibold text-slate-200 truncate">{file.name}</span>
-                <span className="text-[10px] text-slate-500 truncate font-mono opacity-50">...{file.path.slice(-30)}</span>
+                <span className="text-sm font-bold text-slate-900 truncate">{file.name}</span>
+                <span className="text-[10px] text-slate-400 truncate font-mono font-medium">...{file.path.slice(-30)}</span>
               </div>
             </div>
             <div className="flex items-center gap-3 shrink-0 ml-4 font-mono text-[11px] font-bold">
@@ -114,7 +114,7 @@ export default function CodeProposalReview({ proposalId, api }: CodeProposalRevi
       </div>
 
       {/* Footer / Actions */}
-      <div className="p-4 bg-slate-950/20 border-t border-white/5 flex items-center justify-end gap-3">
+      <div className="p-4 bg-slate-50/50 border-t border-slate-100 flex items-center justify-end gap-3">
         {status === 'pending' && (
           <>
             <button 

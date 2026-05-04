@@ -710,7 +710,8 @@ const nayaxaStandalone = {
             // WATERFALL API HELPER
             const searchViaAPIs = async (searchQuery, limit = 5) => {
                 console.log(`[Nayaxa] Fetching from Trusted APIs for: ${searchQuery}`);
-                // 1. Serper.dev (Highest Priority)
+                
+                // 1. Serper.dev (Highest Priority - Fast & Comprehensive)
                 if (process.env.SERPER_API_KEY) {
                     try {
                         const res = await axios.post('https://google.serper.dev/search', { q: searchQuery, gl: "id", hl: "id" }, {
@@ -722,16 +723,47 @@ const nayaxaStandalone = {
                         }
                     } catch (e) { console.error('[Nayaxa] Serper API Error:', e.message); }
                 }
-                // 2. Tavily (Secondary)
+
+                /* 
+                // 2. Google Custom Search (Official - 100/day Free)
+                if (process.env.GOOGLE_SEARCH_API_KEY && process.env.GOOGLE_SEARCH_CX_ID) {
+                    try {
+                        const res = await axios.get('https://www.googleapis.com/customsearch/v1', {
+                            params: { key: process.env.GOOGLE_SEARCH_API_KEY, cx: process.env.GOOGLE_SEARCH_CX_ID, q: searchQuery },
+                            timeout: 10000
+                        });
+                        if (res.data?.items?.length > 0) {
+                            return res.data.items.slice(0, limit).map(r => ({ source: 'Google Official', title: r.title, snippet: r.snippet, link: r.link }));
+                        }
+                    } catch (e) { console.error('[Nayaxa] Google Official API Error:', e.message); }
+                }
+                */
+
+                // 3. Tavily (Specialized for AI/LLM)
                 if (process.env.TAVILY_API_KEY) {
                     try {
                         const res = await axios.post('https://api.tavily.com/search', { api_key: process.env.TAVILY_API_KEY, query: searchQuery, max_results: limit }, { timeout: 10000 });
                         if (res.data?.results?.length > 0) {
-                            return res.data.results.map(r => ({ source: 'Tavily (API)', title: r.title, snippet: r.content, link: r.url }));
+                            return res.data.results.map(r => ({ source: 'Tavily (AI)', title: r.title, snippet: r.content, link: r.url }));
                         }
                     } catch (e) { console.error('[Nayaxa] Tavily API Error:', e.message); }
                 }
-                // 3. SerpApi (Tertiary)
+
+                // 4. Brave Search (Independent - 2.000/mo Free)
+                if (process.env.BRAVE_SEARCH_API_KEY) {
+                    try {
+                        const res = await axios.get('https://api.search.brave.com/res/v1/web/search', {
+                            params: { q: searchQuery, count: limit },
+                            headers: { 'X-Subscription-Token': process.env.BRAVE_SEARCH_API_KEY, 'Accept': 'application/json' },
+                            timeout: 10000
+                        });
+                        if (res.data?.web?.results?.length > 0) {
+                            return res.data.web.results.slice(0, limit).map(r => ({ source: 'Brave Search', title: r.title, snippet: r.description, link: r.url }));
+                        }
+                    } catch (e) { console.error('[Nayaxa] Brave Search API Error:', e.message); }
+                }
+
+                // 5. SerpApi (Tertiary)
                 if (process.env.SERPAPI_API_KEY) {
                     try {
                         const res = await axios.get('https://serpapi.com/search', {
@@ -743,7 +775,8 @@ const nayaxaStandalone = {
                         }
                     } catch (e) { console.error('[Nayaxa] SerpApi Error:', e.message); }
                 }
-                // 4. HasData (Quaternary)
+
+                // 6. HasData (Quaternary)
                 if (process.env.HASDATA_API_KEY) {
                     try {
                         const res = await axios.get('https://api.hasdata.com/scrape/google/serp', {
@@ -757,7 +790,8 @@ const nayaxaStandalone = {
                         }
                     } catch (e) { console.error('[Nayaxa] HasData API Error:', e.response ? e.response.data : e.message); }
                 }
-                // 5. Scrape.do (Quinary)
+
+                // 7. Scrape.do (Quinary)
                 if (process.env.SCRAPEDO_API_KEY) {
                     try {
                         const res = await axios.get('https://api.scrape.do/plugin/google/search', {

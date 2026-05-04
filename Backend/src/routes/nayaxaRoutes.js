@@ -37,6 +37,7 @@ router.all('/api/nayaxa/uploads/*', (req, res) => {
 router.use(verifyApiKey);
 
 router.get('/dashboard-insights', nayaxaController.getDashboardInsights);
+router.get('/usage-stats', nayaxaController.getUsageStats);
 router.get('/proactive-insight', nayaxaController.getProactiveInsight);
 router.get('/sessions', nayaxaController.getChatSessions);
 router.get('/history/:session_id', nayaxaController.getChatHistoryBySession);

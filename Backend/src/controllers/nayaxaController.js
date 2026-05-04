@@ -169,8 +169,8 @@ const nayaxaController = {
             const fullDate = now.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
             const protocol = req.get('x-forwarded-proto') || req.protocol;
-            const host = req.get('host');
-            const baseUrl = `${protocol}://${host}`;
+            const host = req.get('x-forwarded-host') || req.get('host');
+            const baseUrl = process.env.NAYAXA_PUBLIC_URL || `${protocol}://${host}`;
             // --- Parallel Data Fetching for Context ---
             const [nama_instansi, userProfile, personaText, activity] = await Promise.all([
                 nayaxaStandalone.getInstansiName(instansi_id),
@@ -399,8 +399,8 @@ const nayaxaController = {
             const fullDate = now.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
             const protocol = req.get('x-forwarded-proto') || req.protocol;
-            const host = req.get('host');
-            const baseUrl = `${protocol}://${host}`;
+            const host = req.get('x-forwarded-host') || req.get('host');
+            const baseUrl = process.env.NAYAXA_PUBLIC_URL || `${protocol}://${host}`;
 
             const [nama_instansi, userProfile, personaText, activity] = await Promise.all([
                 nayaxaStandalone.getInstansiName(instansi_id),
@@ -770,7 +770,164 @@ const nayaxaController = {
             console.error('ProactiveInsight Error:', error);
             res.json({ success: true, insight: 'Halo! Ada yang bisa saya bantu hari ini?' });
         }
+    },
+
+    /**
+     * Get usage statistics per application and user
+     */
+    getUsageStats: async (req, res) => {
+        try {
+            // 1. Get stats from Nayaxa Chat History (NAYAXA_DB)
+            const [historyStats] = await dbNayaxa.query(`
+                SELECT 
+                    h.app_id, 
+                    a.app_name, 
+                    h.user_id, 
+                    h.brain_used, 
+                    COUNT(h.id) as message_count,
+                    SUM(LENGTH(h.content)) as total_chars
+                FROM nayaxa_chat_history h
+                JOIN nayaxa_api_keys a ON h.app_id = a.id
+                GROUP BY h.app_id, a.app_name, h.user_id, h.brain_used
+            `);
+
+            // 2. Get Daily Breakdown
+            const [dailyStats] = await dbNayaxa.query(`
+                SELECT 
+                    h.app_id,
+                    h.user_id,
+                    DATE(h.created_at) as usage_date,
+                    COUNT(h.id) as message_count,
+                    SUM(LENGTH(h.content)) as total_chars,
+                    h.brain_used
+                FROM nayaxa_chat_history h
+                GROUP BY h.app_id, h.user_id, DATE(h.created_at), h.brain_used
+                ORDER BY usage_date DESC
+            `);
+
+            if (historyStats.length === 0) {
+                return res.json({ success: true, data: [] });
+            }
+
+            // 3. Map user names from Dashboard DB (Join users with profil_pegawai)
+            const userIds = [...new Set(historyStats.map(s => s.user_id))];
+
+            let userMap = {};
+            if (userIds.length > 0) {
+                try {
+                    const [rows] = await dbDashboard.query(`
+                        SELECT u.id, p.nama_lengkap, u.username
+                        FROM users u
+                        LEFT JOIN profil_pegawai p ON u.profil_pegawai_id = p.id
+                        WHERE u.id IN (?)
+                    `, [userIds]);
+                    rows.forEach(r => { 
+                        userMap[r.id] = r.nama_lengkap || r.username; 
+                    });
+                } catch (dbErr) {
+                    console.warn('[UsageStats] Dashboard DB user fetch failed:', dbErr.message);
+                }
+            }
+
+
+            // 4. Constants for Cost
+            const COST_DEEPSEEK = 0.20 / 1000000;
+            const COST_GEMINI = 0.15 / 1000000;
+            const CHARS_PER_TOKEN = 3.5;
+
+            const apps = {};
+            
+            // Helper to calc tokens/cost
+            const getCost = (chars, brain) => {
+                const tokens = chars / CHARS_PER_TOKEN;
+                const rate = (brain || '').toLowerCase().includes('deepseek') ? COST_DEEPSEEK : COST_GEMINI;
+                return { tokens: Math.round(tokens), cost: tokens * rate };
+            };
+
+            historyStats.forEach(stat => {
+                const appId = stat.app_id;
+                if (!apps[appId]) {
+                    apps[appId] = {
+                        app_name: stat.app_name,
+                        users: {}
+                    };
+                }
+
+                const userId = stat.user_id;
+                if (!apps[appId].users[userId]) {
+                    apps[appId].users[userId] = {
+                        user_id: userId,
+                        user_name: userMap[userId] || `Personil #${userId}`,
+                        message_count: 0,
+                        total_tokens: 0,
+                        estimated_cost: 0,
+                        daily_usage: {}
+                    };
+                }
+
+                const { tokens, cost } = getCost(stat.total_chars, stat.brain_used);
+                apps[appId].users[userId].message_count += parseInt(stat.message_count);
+                apps[appId].users[userId].total_tokens += tokens;
+                apps[appId].users[userId].estimated_cost += cost;
+            });
+
+            // Fill daily usage
+            dailyStats.forEach(stat => {
+                const app = apps[stat.app_id];
+                if (app && app.users[stat.user_id]) {
+                    const user = app.users[stat.user_id];
+                    const dateStr = new Date(stat.usage_date).toISOString().split('T')[0];
+                    
+                    if (!user.daily_usage[dateStr]) {
+                        user.daily_usage[dateStr] = { date: dateStr, message_count: 0, total_tokens: 0, estimated_cost: 0 };
+                    }
+
+                    const { tokens, cost } = getCost(stat.total_chars, stat.brain_used);
+                    user.daily_usage[dateStr].message_count += parseInt(stat.message_count);
+                    user.daily_usage[dateStr].total_tokens += tokens;
+                    user.daily_usage[dateStr].estimated_cost += cost;
+                }
+            });
+
+            // Convert daily_usage map to sorted array and calculate Global Stats
+            const globalDaily = {};
+            Object.values(apps).forEach(app => {
+                Object.values(app.users).forEach(user => {
+                    user.daily_usage = Object.values(user.daily_usage).sort((a, b) => b.date.localeCompare(a.date));
+                    
+                    // Aggregate to Global
+                    user.daily_usage.forEach(day => {
+                        if (!globalDaily[day.date]) {
+                            globalDaily[day.date] = { date: day.date, message_count: 0, total_tokens: 0, estimated_cost: 0 };
+                        }
+                        globalDaily[day.date].message_count += day.message_count;
+                        globalDaily[day.date].total_tokens += day.total_tokens;
+                        globalDaily[day.date].estimated_cost += day.estimated_cost;
+                    });
+                });
+            });
+
+            // Final Structure
+            const result = Object.entries(apps).map(([id, app]) => ({
+                app_id: parseInt(id),
+                app_name: app.app_name.replace(/_/g, ' ').toUpperCase(),
+                total_app_cost: Object.values(app.users).reduce((sum, u) => sum + u.estimated_cost, 0),
+                total_app_messages: Object.values(app.users).reduce((sum, u) => sum + u.message_count, 0),
+                users: Object.values(app.users).sort((a, b) => b.estimated_cost - a.estimated_cost)
+            }));
+
+            res.json({ 
+                success: true, 
+                data: result.sort((a, b) => b.total_app_cost - a.total_app_cost),
+                global_daily: Object.values(globalDaily).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30) // Last 30 days
+            });
+
+        } catch (error) {
+            console.error('Usage Stats Error:', error);
+            res.status(500).json({ success: false, message: error.message });
+        }
     }
+
 };
 
 

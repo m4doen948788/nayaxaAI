@@ -7,6 +7,7 @@ const nayaxaStandalone = require('./nayaxaStandalone');
 const exportService = require('./exportService');
 const knowledgeTool = require('./knowledgeTool');
 const codeAgent = require('./codeAgentService');
+const nayaxaMindService = require('./nayaxaMindService');
 
 /**
  * DeepSeek Service - Stable v4.5.3
@@ -51,9 +52,11 @@ const toolFunctions = {
                 };
             }
 
-            const downloadUrl = await (format === 'excel' ? exportService.generateExcel(content, filename) :
+            const downloadPath = await (format === 'excel' ? exportService.generateExcel(content, filename) :
                                 format === 'pdf' ? exportService.generatePDF(content, filename) :
                                 exportService.generateWord(content, filename));
+            
+            const downloadUrl = downloadPath.startsWith('http') ? downloadPath : `${baseUrl}${downloadPath}`;
             
             return { 
                 success: true, 
@@ -67,9 +70,10 @@ const toolFunctions = {
     pembangkit_paparan_pptx: async (data, { baseUrl }) => {
         try {
             const res = await pptxService.generatePresentation(data);
+            const downloadUrl = res.url.startsWith('http') ? res.url : `${baseUrl}${res.url}`;
             return { 
                 success: true, 
-                download_url: res.url, 
+                download_url: downloadUrl, 
                 message: `Paparan PPTX '${data.judul}' berhasil dibuat. JANGAN tuliskan link download di jawaban Anda, karena sistem sudah menampilkannya secara otomatis melalui tombol.` 
             };
         } catch (err) {
@@ -93,6 +97,10 @@ const toolFunctions = {
     search_files_and_knowledge: async ({ query }) => {
         const results = await nayaxaStandalone.searchLibrary(query);
         return { search_results: results };
+    },
+    analyze_dashboard_document: async ({ file_id }, { app_id }) => {
+        const result = await nayaxaMindService.analyzeAndIngestDocument(file_id, app_id);
+        return { analysis_result: result };
     },
     fill_excel_template: async ({ filled_data, filename }, { excelBase64, baseUrl }) => {
         try {
@@ -303,6 +311,20 @@ const DEEPSEEK_TOOLS = [
             } 
         } 
     },
+    { 
+        type: "function", 
+        function: { 
+            name: "analyze_dashboard_document", 
+            description: "Membaca dan menganalisis secara mendalam dokumen yang ada di Dashboard Dokumen. Gunakan ini jika user meminta analisis spesifik terhadap file yang ditemukan di pencarian.", 
+            parameters: { 
+                type: "object", 
+                properties: { 
+                    file_id: { type: "number", description: "ID file yang didapat dari hasil search_files_and_knowledge" } 
+                }, 
+                required: ["file_id"] 
+            } 
+        } 
+    },
     { type: "function", function: { 
         name: "fill_excel_template", 
         description: "Mengisi data ke dalam file Excel yang baru saja diunggah oleh user.", 
@@ -402,7 +424,7 @@ const nayaxaDeepSeekService = {
     chatWithNayaxa: async (userMessage, files, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '', nama_instansi = 'N/A', personaPromptSnippet = '', userProfile = null, lastActivityContext = null, coding_mode = false, session_id = null, onStepCallback = null, signal = null) => {
         if (signal?.aborted) return 'Request aborted.';
         try {
-            const apiKey = process.env.DEEPSEEK_API_KEY;
+            const apiKey = process.env.NAYAXA_DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY;
             
             // --- Parallel Initialization (v4.6.0) ---
             const [schemaMapString, glossaryString] = await Promise.all([
@@ -500,6 +522,7 @@ const nayaxaDeepSeekService = {
             - Tool ini akan mencari di database file (DOKUMEN_UPLOAD) dan database pengetahuan (NAYAXA_KNOWLEDGE).
             - **ANDA WAJIB memberikan link download** untuk setiap hasil berkategori [FILE].
             - **DILARANG KERAS** memberikan jawaban tanpa link jika file ditemukan.
+            - **ON-DEMAND LEARNING**: Jika user meminta Anda untuk "Membaca", "Menganalisis", "Mempelajari", atau "Meringkas" dokumen yang ditemukan di Dashboard (bukan file yang baru saja diunggah di chat), gunakan tool 'analyze_dashboard_document' dengan ID file yang sesuai. Hasil analisis akan secara otomatis disimpan ke memori jangka panjang Anda (Nayaxa Intelligence) agar hemat token di masa depan.
             - Format Link: [Unduh (Nama File)](URL_DARI_TOOL). Letakkan link ini secara menonjol di bagian ATAS jawaban Anda dengan format tombol Markdown yang jelas.
             - Jika data ditemukan, LANGSUNG berikan jawabannya tanpa menceritakan langkah-langkah pencariannya.
             
@@ -902,27 +925,17 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
             if (generatedDocLinks.length > 0) {
                 let linkMarkdowns = "\n\n### 📄 File Hasil Generasi:\n";
                 generatedDocLinks.forEach(doc => {
-                    // FORCE ABSOLUTE URL: Ensure links always point to port 6001
+                    // Clean up URL: ensure it's absolute and properly formed
                     let finalUrl = doc.url;
-                    const port = process.env.PORT || 6001;
-                    const baseUrl = `http://localhost:${port}`;
-
-                    if (finalUrl.startsWith('http')) {
-                        // If it's already an absolute URL, just make sure it's on the right port if it's localhost
+                    if (!finalUrl.startsWith('http')) {
+                        const port = process.env.PORT || 6001;
+                        const internalBaseUrl = baseUrl || `http://localhost:${port}`;
+                        finalUrl = `${internalBaseUrl}${finalUrl.startsWith('/') ? '' : '/'}${finalUrl}`;
+                    } else {
+                        // If it's already an absolute URL, make sure it's on the right port if it's localhost
+                        const port = process.env.PORT || 6001;
                         if (finalUrl.includes('localhost') && !finalUrl.includes(`:${port}`)) {
                             finalUrl = finalUrl.replace(/localhost(:\d+)?/, `localhost:${port}`);
-                        }
-                    } else {
-                        // SMART ROUTING for relative paths
-                        const fileNameOnly = finalUrl.split('/').pop();
-                        const isDashboardUpload = /^\d{10,}-/.test(fileNameOnly);
-
-                        if (isDashboardUpload) {
-                            finalUrl = `${baseUrl}/uploads/dashboard/${fileNameOnly}`;
-                        } else if (finalUrl.includes('export/')) {
-                            finalUrl = `${baseUrl}/export/${fileNameOnly}`;
-                        } else {
-                            finalUrl = `${baseUrl}/uploads/${fileNameOnly}`;
                         }
                     }
                     

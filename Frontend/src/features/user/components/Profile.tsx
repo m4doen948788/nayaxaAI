@@ -23,12 +23,12 @@ export default function Profile() {
             <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-4xl font-bold text-white shadow-2xl shadow-indigo-500/20">
             {user.name[0]}
             </div>
-            <div className="absolute -bottom-2 -right-2 w-8 h-8 bg-green-500 border-4 border-slate-950 rounded-full"></div>
+            <div className="absolute -bottom-2 -right-2 w-8 h-8 bg-green-500 border-4 border-white rounded-full"></div>
         </div>
         <div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">{user.name}</h1>
+          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">{user.name}</h1>
           <div className="flex items-center gap-3 mt-1">
-            <span className="px-3 py-1 bg-indigo-600/20 text-indigo-400 text-[10px] font-bold uppercase tracking-widest rounded-full border border-indigo-600/20">
+            <span className="px-3 py-1 bg-indigo-50 text-indigo-600 text-[10px] font-bold uppercase tracking-widest rounded-full border border-indigo-100">
                 {user.role}
             </span>
             <span className="text-slate-500 text-sm flex items-center gap-1">
@@ -41,9 +41,9 @@ export default function Profile() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         {/* Profile Info */}
         <div className="md:col-span-2 space-y-8">
-          <section className="glass-card p-8">
-            <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
-                <User className="text-indigo-400" size={20} /> Personal Information
+          <section className="glass-card p-8 bg-white shadow-xl shadow-slate-200/50">
+            <h2 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-2">
+                <User className="text-indigo-600" size={20} /> Personal Information
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-6 gap-x-12">
                 <InfoItem icon={<Shield size={16}/>} label="NIP / Employee ID" value={user.nip} />
@@ -54,20 +54,20 @@ export default function Profile() {
           </section>
 
           {/* Persona Analysis */}
-          <section className="glass-card p-8 border-indigo-500/20 bg-indigo-600/[0.02]">
+          <section className="glass-card p-8 border-indigo-100 bg-indigo-50/30">
             <div className="flex items-center justify-between mb-6">
-                <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                    <Zap className="text-yellow-400" size={20} /> AI Persona Analysis
+                <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                    <Zap className="text-amber-500" size={20} /> AI Persona Analysis
                 </h2>
                 <div className="flex items-center gap-1">
                     {[1,2,3,4,5].map(i => <Star key={i} size={12} className="fill-indigo-500 text-indigo-500" />)}
                 </div>
             </div>
-            <p className="text-slate-300 leading-relaxed italic text-sm">
+            <p className="text-slate-700 leading-relaxed italic text-sm">
                 "{user.persona}"
             </p>
             <div className="mt-6 flex gap-4">
-                <div className="px-4 py-2 bg-white/5 rounded-xl border border-white/10 text-[11px] text-slate-400 italic">
+                <div className="px-4 py-2 bg-white rounded-xl border border-slate-200 text-[11px] text-slate-500 italic shadow-sm">
                     Analisis terakhir: 2 jam yang lalu
                 </div>
             </div>
@@ -76,23 +76,23 @@ export default function Profile() {
 
         {/* Sidebar Actions */}
         <div className="space-y-6">
-             <div className="glass-card p-6">
-                <h3 className="font-bold text-white mb-4">Security</h3>
+             <div className="glass-card p-6 bg-white shadow-xl shadow-slate-200/50">
+                <h3 className="font-bold text-slate-900 mb-4">Security</h3>
                 <div className="space-y-2">
-                    <button className="w-full flex items-center gap-3 px-4 py-3 bg-white/5 hover:bg-white/10 rounded-2xl text-sm text-slate-300 transition-all border border-white/5">
+                    <button className="w-full flex items-center gap-3 px-4 py-3 bg-slate-50 hover:bg-slate-100 rounded-2xl text-sm text-slate-700 transition-all border border-slate-100">
                         <Key size={16} /> Manage API Keys
                     </button>
-                    <button className="w-full flex items-center gap-3 px-4 py-3 bg-white/5 hover:bg-white/10 rounded-2xl text-sm text-slate-300 transition-all border border-white/5">
+                    <button className="w-full flex items-center gap-3 px-4 py-3 bg-slate-50 hover:bg-slate-100 rounded-2xl text-sm text-slate-700 transition-all border border-slate-100">
                         <History size={16} /> Login Sessions
                     </button>
                 </div>
              </div>
 
-             <div className="glass-card p-6 bg-gradient-to-br from-indigo-600/20 to-transparent">
-                <h3 className="font-bold text-white mb-2">Usage Credits</h3>
-                <div className="text-2xl font-bold text-white mb-1">92.4%</div>
-                <p className="text-[10px] text-slate-400 uppercase font-medium">Platform Reliability Score</p>
-                <div className="w-full h-2 bg-slate-800 rounded-full mt-4 overflow-hidden">
+             <div className="glass-card p-6 bg-gradient-to-br from-indigo-50 to-transparent border-indigo-100 shadow-xl shadow-indigo-600/5">
+                <h3 className="font-bold text-slate-900 mb-2">Usage Credits</h3>
+                <div className="text-2xl font-bold text-indigo-600 mb-1">92.4%</div>
+                <p className="text-[10px] text-slate-500 uppercase font-medium">Platform Reliability Score</p>
+                <div className="w-full h-2 bg-slate-200 rounded-full mt-4 overflow-hidden">
                     <div className="h-full bg-indigo-500" style={{ width: '92.4%' }}></div>
                 </div>
              </div>
@@ -108,7 +108,7 @@ function InfoItem({ icon, label, value }: { icon: React.ReactNode, label: string
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
                 {icon} {label}
             </span>
-            <p className="text-sm font-semibold text-white">{value}</p>
+            <p className="text-sm font-bold text-slate-900">{value}</p>
         </div>
     );
 }

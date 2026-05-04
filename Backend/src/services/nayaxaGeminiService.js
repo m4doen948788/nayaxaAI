@@ -8,6 +8,8 @@ const exportService = require('./exportService');
 const knowledgeTool = require('./knowledgeTool');
 const XLSX = require('xlsx');
 const pptxService = require('./pptxService');
+const codeAgent = require('./codeAgentService');
+const nayaxaMindService = require('./nayaxaMindService');
 
 const summaryCache = new Map();
 
@@ -164,6 +166,17 @@ const nayaxaTools = [{
                     query: { type: "string", description: "Nama file, materi, atau kata kunci pencarian dokumen" }
                 },
                 required: ["query"]
+            }
+        },
+        {
+            name: "analyze_dashboard_document",
+            description: "Membaca dan menganalisis secara mendalam dokumen yang ada di Dashboard Dokumen. Gunakan ini jika user meminta analisis spesifik terhadap file yang ditemukan di pencarian.",
+            parameters: {
+                type: "object",
+                properties: {
+                    file_id: { type: "number", description: "ID file yang didapat dari hasil search_files_and_knowledge" }
+                },
+                required: ["file_id"]
             }
         },
         {
@@ -348,9 +361,11 @@ const toolFunctions = {
                 };
             }
 
-            const downloadUrl = await (format === 'excel' ? exportService.generateExcel(content, filename) :
+            const downloadPath = await (format === 'excel' ? exportService.generateExcel(content, filename) :
                                 format === 'pdf' ? exportService.generatePDF(content, filename) :
                                 exportService.generateWord(content, filename, options));
+            
+            const downloadUrl = downloadPath.startsWith('http') ? downloadPath : `${baseUrl}${downloadPath}`;
             
             return { 
                 success: true, 
@@ -358,6 +373,7 @@ const toolFunctions = {
                 message: `File ${format.toUpperCase()} '${filename}' berhasil dibuat. JANGAN tuliskan link download di jawaban Anda, karena sistem sudah menampilkannya secara otomatis melalui tombol.` 
             };
         } catch (err) {
+            console.error('[DocumentTool] Error:', err);
             return { success: false, error: err.message };
         }
     },
@@ -387,6 +403,10 @@ const toolFunctions = {
         const results = await nayaxaStandalone.searchLibrary(query);
         return { search_results: results };
     },
+    analyze_dashboard_document: async ({ file_id }, { app_id }) => {
+        const result = await nayaxaMindService.analyzeAndIngestDocument(file_id, app_id);
+        return { analysis_result: result };
+    },
     fill_excel_template: async ({ filled_data, filename }, { excelBase64, baseUrl }) => {
         try {
             if (!excelBase64) {
@@ -402,9 +422,10 @@ const toolFunctions = {
     pembangkit_paparan_pptx: async (data, { baseUrl }) => {
         try {
             const res = await pptxService.generatePresentation(data);
+            const downloadUrl = res.url.startsWith('http') ? res.url : `${baseUrl}${res.url}`;
             return { 
                 success: true, 
-                download_url: res.url, 
+                download_url: downloadUrl, 
                 message: `Paparan PPTX '${data.judul}' berhasil dibuat. JANGAN tuliskan link download di jawaban Anda, karena sistem sudah menampilkannya secara otomatis melalui tombol.` 
             };
         } catch (err) {
@@ -565,9 +586,11 @@ ${lastActivityContext ? `\nKONTEKS AKTIVITAS: "${lastActivityContext}"\nSapa use
             
             CATATAN DOKUMEN & FILE: 
             - Jika user bertanya tentang dokumen, mencari file, atau meminta file spesifik ("Mana dokumen X?", "Minta file Y"), Anda WAJIB LANGSUNG menggunakan tool 'search_files_and_knowledge' tanpa basa-basi.
-            - **ANDA WAJIB memberikan link download** untuk setiap hasil berkategori [FILE] yang ditemukan.
-            - **DILARANG KERAS** hanya menyebutkan nama file tanpa memberikan link unduhnya.
-            - Format Link: [Unduh (Nama File)](URL_DARI_TOOL). Letakkan link ini secara menonjol di bagian ATAS jawaban Anda.
+            - **ANDA WAJIB memberikan link download** untuk setiap hasil berkategori [FILE].
+            - **DILARANG KERAS** memberikan jawaban tanpa link jika file ditemukan.
+            - **DILARANG KERAS MENULIS LINK SECARA MANUAL** di dalam teks jawaban Anda (seperti http://localhost...). Cukup gunakan tool, dan sistem akan menampilkannya secara otomatis.
+            - **ON-DEMAND LEARNING**: Jika user meminta Anda untuk "Membaca", "Menganalisis", "Mempelajari", atau "Meringkas" dokumen yang ditemukan di Dashboard (bukan file yang baru saja diunggah di chat), gunakan tool 'analyze_dashboard_document' dengan ID file yang sesuai. Hasil analisis akan secara otomatis disimpan ke memori jangka panjang Anda (Nayaxa Intelligence) agar hemat token di masa depan.
+            - Format Link: [Unduh (Nama File)](URL_DARI_TOOL). Letakkan link ini secara menonjol di bagian ATAS jawaban Anda dengan format tombol Markdown yang jelas.
             
             Identitas USER: ${identitasUser}
             PENTING: DILARANG KERAS memunculkan "ID", "NIP", "Profil ID", "Instansi ID", atau angka identitas teknis lainnya (seperti: "ID: 151", "ID: 66", dsb) kecuali user bertanya secara spesifik. 

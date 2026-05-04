@@ -1,6 +1,11 @@
 import axios from 'axios';
 
-const API_BASE_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+const isLocal = 
+  window.location.hostname === 'localhost' || 
+  window.location.hostname === '127.0.0.1' || 
+  /^192\.168\./.test(window.location.hostname);
+
+const API_BASE_URL = isLocal
   ? `http://${window.location.hostname}:6001`
   : 'https://api-nayaxa.bapperida-ppm.my.id';
 
@@ -16,6 +21,10 @@ export const createNayaxaApi = (apiKey: string) => {
   return {
     getDashboardInsights: async (instansi_id?: number, profil_id?: number) => {
       const res = await client.get('/dashboard-insights', { params: { instansi_id, profil_id } });
+      return res.data;
+    },
+    getUsageStats: async () => {
+      const res = await client.get('/usage-stats');
       return res.data;
     },
     getSessions: async (user_id: number) => {
