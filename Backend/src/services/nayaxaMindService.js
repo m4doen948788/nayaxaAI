@@ -37,8 +37,10 @@ const axios = require('axios');
 const analyzeWithDeepSeek = async (text) => {
     try {
         const apiKey = getDeepSeekKey();
+        const targetModel = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
+        console.log(`[Mind] Analyzing document with model: ${targetModel}`);
         const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-            model: "deepseek-v4-flash",
+            model: targetModel,
             messages: [
                 { role: "system", content: "Anda adalah analis dokumen Nayaxa. Tugas Anda adalah meringkas isi dokumen secara mendalam (inti sari) untuk memori pengetahuan jangka panjang. Fokus pada fakta, angka, dan aturan penting. Gunakan bahasa Indonesia yang formal dan profesional." },
                 { role: "user", content: `Ringkas isi dokumen berikut untuk memori Nayaxa Intelligence: \n\n${text.substring(0, 30000)}` }
@@ -47,6 +49,9 @@ const analyzeWithDeepSeek = async (text) => {
         }, {
             headers: { 'Authorization': `Bearer ${apiKey}` }
         });
+        if (response.data.model) {
+            console.log(`[Mind] Server actually used model: ${response.data.model}`);
+        }
         return response.data.choices[0].message.content;
     } catch (error) {
         console.error('[Mind] DeepSeek Analysis Error:', error.message);

@@ -435,18 +435,17 @@ const nayaxaDeepSeekService = {
             const system = `Identitas ANDA: Nayaxa, asisten AI dari Bapperida yang dibuat oleh Sammy. 
             PENTING: DILARANG KERAS MENGGUNAKAN EMOJI APAPUN.
 
-            !!! PROTOKOL RISET BERDASARKAN FAKTA (PENTING) !!!
-            1. VERIFIKASI SEKARANG: Jika user bertanya tentang fakta yang bisa berubah (Berita, Jabatan Pejabat, Presiden, Pilkada, Teknologi Terbaru, atau Kejadian di 2024-2026), Anda WAJIB menggunakan tool 'search_internet'.
-            2. STRATEGI PENCARIAN PEJABAT: Gunakan kata kunci "Kabinet Merah Putih", "Pilkada 2024", "Pelantikan Serentak 2025", dan "Periode 2025-2029". Namun, SELALU waspada terhadap berita **RESHUFFLE** atau perubahan terbaru di tahun 2025-2029.
-            3. PRIORITAS STATUS TERBARU: Jika terdapat berita reshuffle atau pelantikan yang lebih baru dari tanggal awal masa jabatan, Anda WAJIB memprioritaskan data terbaru tersebut. Jika tidak ada berita perubahan, gunakan standar masa jabatan **2025-2029**.
-            4. JANGAN PERNAH MENGARANG: Jika pengetahuan internal Anda (cutoff) tidak memiliki data terbaru, katakan "Saya akan mencari data terupdate..." dan LANGSUNG panggil tool.
-            5. PENCARIAN BERTINGKAT (LAYERED SEARCH): 
-               - Step 1: Cari di 'execute_sql_query' jika terkait data internal instansi.
-               - Step 2: Cari di 'search_files_and_knowledge' jika terkait dokumen atau aturan internal.
-               - Step 3: Cari di 'search_internet' untuk fakta publik terkini.
-            6. RESILIENCE MODE: Jika satu sumber tidak memberikan hasil, coba kueri yang berbeda atau sumber lain. Selalu berikan referensi link sumber di akhir jawaban.
-            7. SELF-CORRECTION & VERIFICATION: Periksa tanggal di ringkasan pencarian. Jika berita menyebutkan peristiwa tahun 2018-2022 (seperti Masa Jabatan lama atau PJ lama), Anda WAJIB mengabaikannya untuk pertanyaan status saat ini. Prioritaskan data hasil Pilkada 2024.
-            8. INTERNAL KNOWLEDGE DEPRECATION (CRITICAL): Pengetahuan internal Anda tentang Kabinet (Indonesia Maju/Jokowi) sudah USANG. Untuk pertanyaan menteri atau presiden, Anda WAJIB mengikuti data dari 'search_internet'. Prabowo Subianto adalah PRESIDEN (sejak Oct 2024), bukan Menteri. Jangan mencampurkan nama kabinet lama (Indonesia Maju) dengan pemerintahan saat ini (Kabinet Merah Putih).
+            !!! PROTOKOL RISET & PENCARIAN (STRICT) !!!
+            1. PRIORITAS INTERNAL: Jika user bertanya tentang data organisasi (Kegiatan, Bidang, Pegawai, Urusan, atau Statistik Dashboard), Anda WAJIB menggunakan tool 'execute_sql_query' atau 'get_pegawai_statistics'.
+            2. PEMBATASAN INTERNET: DILARANG KERAS menggunakan 'search_internet' untuk data internal di atas secara default.
+            3. PENGECUALIAN INTERNET: Anda HANYA boleh menggunakan 'search_internet' untuk data internal JIKA user menyebutkan instruksi eksplisit seperti "cari di internet juga", "cek berita terkait", atau "verifikasi secara online".
+            4. FAKTA PUBLIK: Tetap gunakan 'search_internet' secara proaktif untuk fakta yang bisa berubah di luar organisasi (Berita Nasional, Jabatan Menteri, Presiden, Pilkada 2024, Pelantikan 2025, atau Teknologi).
+            5. JANGAN PERNAH MENGARANG: Jika database kosong untuk bulan berjalan, katakan "Data belum tersedia di database" daripada mencari di internet tanpa perintah.
+            6. PENCARIAN BERTINGKAT: 
+               - Step 1: 'execute_sql_query' (Internal Data).
+               - Step 2: 'search_files_and_knowledge' (Internal Documents).
+               - Step 3: 'search_internet' (Public Facts OR Explicit User Request).
+            7. SELF-CORRECTION: Abaikan berita tahun 2018-2022 jika mencari status pejabat saat ini. Prioritaskan Kabinet Merah Putih (2024-2029).
 
             PROTOKOL AI DOCUMENT WORKSTATION (EDITOR MODE):
             - Jika user mengirimkan pesan dengan awalan [NAYAXA_EDITOR_FEEDBACK], ini berarti Anda sedang berada di mode perbaikan dokumen di Workstation.
@@ -700,10 +699,13 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                 ? [...DEEPSEEK_TOOLS, ...CODING_AGENT_TOOLS] 
                 : DEEPSEEK_TOOLS;
 
+            const targetModel = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
+
             // --- STREAMING-ENABLED API CALL ---
             const callDeepSeekStream = async (msgs, isToolLoop = false) => {
+                console.log(`[DeepSeek] Requesting model: ${targetModel} (Loop: ${isToolLoop ? 'Yes' : 'No'})`);
                 const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-                    model: "deepseek-v4-flash", // Menggunakan DeepSeek V4 Flash sesuai permintaan user (Hemat Biaya)
+                    model: targetModel, 
                     messages: msgs,
                     tools: !isToolLoop ? activeTools : undefined, // Tools only on first turn or as needed
                     temperature: 0.1,
@@ -743,6 +745,15 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                         if (trimmedLine.startsWith('data: ')) {
                             try {
                                 const data = JSON.parse(trimmedLine.substring(6));
+                                
+                                // LOG JAWABAN SERVER (Hanya sekali per request)
+                                if (data.model && !finishReason) {
+                                    if (!global.lastLoggedModel || global.lastLoggedModel !== data.model) {
+                                        console.log(`[DeepSeek] Server response model: ${data.model}`);
+                                        global.lastLoggedModel = data.model;
+                                    }
+                                }
+
                                 const delta = data.choices[0]?.delta;
                                 if (!delta) continue;
 

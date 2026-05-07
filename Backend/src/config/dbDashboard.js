@@ -8,8 +8,10 @@ const pool = mysql.createPool({
     password: process.env.DASHBOARD_DB_PASSWORD,
     database: process.env.DASHBOARD_DB_NAME,
     waitForConnections: true,
-    connectionLimit: 5,
+    connectionLimit: 20,
     dateStrings: true,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 10000
 });
 
 pool.on('error', (err) => {

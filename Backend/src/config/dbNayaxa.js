@@ -8,6 +8,7 @@ const pool = mysql.createPool({
     database: process.env.NAYAXA_DB_NAME,
     waitForConnections: true,
     connectionLimit: 50, // Increased for high concurrency (indexing + chat)
+    queueLimit: 0,
     enableKeepAlive: true,
     keepAliveInitialDelay: 10000,
     dateStrings: true,

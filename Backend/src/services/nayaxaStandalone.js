@@ -304,13 +304,22 @@ const nayaxaStandalone = {
             const glossaryPangkat = pangkat.map(p => `${p.pangkat_golongan} [ID: ${p.id}]`).join(', ');
             const glossaryTipeUser = tipeUser.map(t => `${t.tipe_user} [ID: ${t.id}]`).join(', ');
             
-            const s = `GLOSARIUM RESMI:
-- DAFTAR INSTANSI (Gunakan ID untuk kueri): ${glossaryInstansi}
-- DAFTAR BIDANG (Gunakan ID untuk kueri): ${glossaryBidang}
+            // Fetch Dynamic Glossary from Nayaxa Knowledge (Category: GLOSSARY)
+            let dynamicGlossary = "";
+            try {
+                const [knowledgeRows] = await dbNayaxa.query("SELECT feature_name, content FROM nayaxa_knowledge WHERE category = 'GLOSSARY' AND is_active = 1");
+                dynamicGlossary = knowledgeRows.map(k => `- ${k.feature_name}: ${k.content}`).join('\n');
+            } catch (err) { console.error('[Nayaxa] Dynamic Glossary Fetch Error:', err.message); }
+
+            const s = `GLOSARIUM RESMI (WAJIB GUNAKAN ID):
+- DAFTAR INSTANSI: ${glossaryInstansi}
+- DAFTAR BIDANG: ${glossaryBidang}
 - DAFTAR JABATAN: ${glossaryJabatan}
 - DAFTAR PANGKAT/GOLONGAN: ${glossaryPangkat}
 - DAFTAR TIPE USER: ${glossaryTipeUser}
-- DEFINISI KODE KEGIATAN: ${glossaryTipe}`;
+- DEFINISI KODE KEGIATAN: ${glossaryTipe}
+- ATURAN SISTEM & STRATEGI KUERI (DARI DASHBOARD):
+${dynamicGlossary}`;
             
             _nayaxaCache.glossary.data = s;
             _nayaxaCache.glossary.ts = now;

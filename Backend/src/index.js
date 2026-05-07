@@ -29,7 +29,7 @@ app.get('/health', (req, res) => {
 const nayaxaRoutes = require('./routes/nayaxaRoutes');
 app.use('/', nayaxaRoutes);
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`=========================================`);
     console.log(`🚀 Nayaxa AI Engine Standalone Active!`);
     console.log(`📡 Listening on port: ${PORT}`);
