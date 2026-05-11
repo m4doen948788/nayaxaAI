@@ -59,6 +59,7 @@ export const createNayaxaApi = (apiKey: string) => {
           const reader = response.body.getReader();
           const decoder = new TextDecoder();
           let buffer = '';
+          let isResolved = false;
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -79,10 +80,25 @@ export const createNayaxaApi = (apiKey: string) => {
                 if (eventType === 'step') { onStep(parsed); }
                 else if (eventType === 'message') { onContent(parsed.text); }
                 else if (eventType === 'thought') { onThought(parsed.text); }
-                else if (eventType === 'done') { resolve(parsed); return; }
-                else if (eventType === 'error') { reject(new Error(parsed.message)); return; }
+                else if (eventType === 'done') { 
+                  isResolved = true;
+                  resolve(parsed); 
+                  return; 
+                }
+                else if (eventType === 'error') { 
+                  isResolved = true;
+                  reject(new Error(parsed.message)); 
+                  return; 
+                }
               } catch (_) {}
             }
+          }
+          if (!isResolved) {
+            resolve({
+              text: '',
+              brain_used: 'DeepSeek',
+              session_id: data.session_id || ''
+            });
           }
         } catch (err: any) { reject(err); }
       });

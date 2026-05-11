@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Send, Bot, User, Plus, Pin, Paperclip, Mic, Volume2, Sparkles, Search, MoreVertical, ChevronDown, Code2, Terminal, Square, X, Image as ImageIcon, FileText, Copy, Check } from 'lucide-react';
+import { Send, Bot, User, Plus, Pin, Paperclip, Mic, Volume2, Sparkles, Search, MoreVertical, ChevronDown, Code2, Square, X, Image as ImageIcon, FileText, Copy, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -286,15 +286,6 @@ export default function Chat() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setCodingMode(prev => !prev)}
-              className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all text-[12px] font-bold ${
-                codingMode ? 'bg-emerald-50 border-emerald-200 text-emerald-600 shadow-sm' : 'bg-slate-50 border-slate-100 text-slate-500 hover:text-indigo-600'
-              }`}
-            >
-              <Terminal size={15} className={codingMode ? 'animate-pulse' : ''} />
-              <span className="hidden sm:inline">{codingMode ? 'Code Agent: ON' : 'Code Agent'}</span>
-            </button>
             <button className="p-2.5 rounded-xl bg-slate-50 text-slate-400 hover:text-indigo-600 border border-slate-100 transition-all"><Search size={18} /></button>
             <button className="p-2.5 rounded-xl bg-slate-50 text-slate-400 hover:text-indigo-600 border border-slate-100 transition-all"><MoreVertical size={18} /></button>
           </div>

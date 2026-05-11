@@ -174,7 +174,8 @@ const nayaxaTools = [{
             parameters: {
                 type: "object",
                 properties: {
-                    file_id: { type: "number", description: "ID file yang didapat dari hasil search_files_and_knowledge" }
+                    file_id: { type: "number", description: "ID file yang didapat dari hasil search_files_and_knowledge" },
+                    query: { type: "string", description: "Pertanyaan spesifik user untuk menggunakan sistem RAG (Semantic Search). Kosongkan jika user hanya meminta ringkasan umum." }
                 },
                 required: ["file_id"]
             }
@@ -249,6 +250,20 @@ const nayaxaTools = [{
                 required: ["judul", "slides"]
             }
         },
+        { 
+            name: "save_document_insight", 
+            description: "Menyimpan ulasan mendalam atau catatan analisis khusus (per bab/pasal) dari sebuah dokumen ke memori pengetahuan Nayaxa secara otomatis di latar belakang sesegera mungkin setiap kali Anda menghasilkan ulasan analisis dokumen yang bernilai tinggi dan berfakta kuat. JANGAN pernah memanggil tool ini untuk obrolan kasual, sapaan pembuka, basa-basi, atau chitchat.", 
+            parameters: { 
+                type: "object", 
+                properties: { 
+                    file_hash: { type: "string", description: "Hash unik berkas (didapat dari konteks dokumen)" },
+                    sub_topic: { type: "string", description: "Nama Bab/Sub-topik khusus (misal: 'Bab III: Perencanaan')" },
+                    insight_content: { type: "string", description: "Teks analisis mendalam atau ringkasan khusus yang ingin disimpan" },
+                    user_query: { type: "string", description: "Pertanyaan atau kueri pengguna asli yang memicu pembedahan ini" }
+                }, 
+                required: ["file_hash", "sub_topic", "insight_content", "user_query"] 
+            } 
+        },
         // --- CODING AGENT TOOLS ---
         {
             name: "list_project_files",
@@ -312,6 +327,17 @@ const nayaxaTools = [{
                 properties: {
                     query: { type: "string", description: "Teks yang dicari" },
                     dir_path: { type: "string", description: "Path direktori scan" }
+                },
+                required: ["query"]
+            }
+        },
+        {
+            name: "execute_database_update",
+            description: "Mengeksekusi SQL query untuk manipulasi data atau struktur database (INSERT, UPDATE, DELETE, ALTER, DROP, CREATE) secara asinkron.",
+            parameters: {
+                type: "object",
+                properties: {
+                    query: { type: "string", description: "Query SQL DML atau DDL yang akan dieksekusi secara langsung terhadap database." }
                 },
                 required: ["query"]
             }
@@ -403,8 +429,8 @@ const toolFunctions = {
         const results = await nayaxaStandalone.searchLibrary(query);
         return { search_results: results };
     },
-    analyze_dashboard_document: async ({ file_id }, { app_id }) => {
-        const result = await nayaxaMindService.analyzeAndIngestDocument(file_id, app_id);
+    analyze_dashboard_document: async ({ file_id, query }, { app_id }) => {
+        const result = await nayaxaMindService.analyzeAndIngestDocument(file_id, app_id, query);
         return { analysis_result: result };
     },
     fill_excel_template: async ({ filled_data, filename }, { excelBase64, baseUrl }) => {
@@ -431,6 +457,9 @@ const toolFunctions = {
         } catch (err) {
             return { success: false, error: err.message };
         }
+    },
+    save_document_insight: async ({ file_hash, sub_topic, insight_content, user_query }) => {
+        return await nayaxaMindService.saveDocumentInsight(file_hash, sub_topic, insight_content, user_query);
     },
     // --- CODING AGENT TOOL IMPLEMENTATIONS ---
     list_project_files: async ({ dir_path }) => {
@@ -464,6 +493,10 @@ const toolFunctions = {
     search_in_codebase: async ({ query, dir_path }) => {
         const codeAgent = require('./codeAgentService');
         return await codeAgent.searchInFiles(dir_path || 'D:\\nayaxa-engine', query);
+    },
+    execute_database_update: async ({ query }) => {
+        const jsonResult = await nayaxaStandalone.executeSystemQuery(query);
+        return { database_result: jsonResult };
     }
 };
 
@@ -488,14 +521,33 @@ const TOOL_STEP_LABELS = {
     execute_database_update:   { icon: '🛠️', label: 'Memodifikasi database...' },
 };
 
+const checkNeedSchema = (userMessage, prevHistory = [], coding_mode = false) => {
+    if (coding_mode) return true;
+    const recentHistoryText = prevHistory.slice(-3).map(h => {
+        if (typeof h.content === 'string') return h.content;
+        if (Array.isArray(h.content)) {
+            return h.content.map(part => part.text || '').join(' ');
+        }
+        return '';
+    }).join(' ');
+    const combinedText = (userMessage + ' ' + recentHistoryText).toLowerCase();
+    return /database|sql|query|tabel|table|pegawai|absen|kehadiran|kegiatan|aktivitas|ranking|bidang|jabatan|rekap|statistik|data|jumlah|scoring/i.test(combinedText);
+};
+
 const nayaxaGeminiService = {
     chatWithNayaxa: async (userMessage, files, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '', nama_instansi = 'N/A', personaPromptSnippet = '', userProfile = null, lastActivityContext = null, coding_mode = false, session_id = null, onStepCallback = null, signal = null) => {
         let apiKey = await getApiKey();
         let attempts = 0;
         let lastError = null;
 
-        const schemaMapString = await nayaxaStandalone.getDatabaseSchema();
-        const glossaryString = await nayaxaStandalone.getMasterDataGlossary();
+        const needSchema = checkNeedSchema(userMessage, prevHistory, coding_mode);
+        let schemaMapString = "[DATABASE SCHEMA] Skema database lengkap hanya dilampirkan jika terdeteksi pertanyaan berbasis data/statistik.";
+        let glossaryString = "[GLOSSARY] Glosarium resmi hanya dilampirkan jika terdeteksi pertanyaan berbasis data/statistik.";
+
+        if (needSchema) {
+            schemaMapString = await nayaxaStandalone.getDatabaseSchema();
+            glossaryString = await nayaxaStandalone.getMasterDataGlossary();
+        }
 
         // Format identity string
         let identitasUser = `Nama: ${user_name}, Instansi: ${nama_instansi} (ID: ${instansi_id}).`;
@@ -531,13 +583,14 @@ WORKFLOW:
 4. Akhiri jawaban HANYA dengan ringkasan 1 kalimat perubahan dan marker [NAYAXA_PROPOSAL:id].
 - VISION: Jika user mengirimkan screenshot kode, error, atau desain UI, Anda WAJIB menganalisisnya secara visual untuk memandu perbaikan kode.`;
 
-        const generalPersonaPrompt = `Identitas ANDA: Nayaxa, asisten AI dari Bapperida yang dibuat oleh Sammy.
-Gaya Bahasa: Sangat ceria, ramah, profesional, dan empatik. Di akhir setiap penjelasan, SELALU tawarkan bantuan ekstra atau berikan satu pertanyaan pendek.
+        const generalPersonaPrompt = nayaxaMindService.getNayaxaGeneralPersonaPrompt(userProfile, user_name, lastActivityContext); /*
+Gaya Bahasa: Sangat ceria, antusias, hangat, penuh semangat, profesional, dan empatik. Di akhir setiap penjelasan, SELALU tawarkan bantuan ekstra atau berikan satu pertanyaan pendek.
 PENTING: DILARANG KERAS MENGGUNAKAN EMOJI APAPUN.
         
 PENTING - ADAPTASI FORMALITAS: Sesuaikan tingkat formalitas Anda dengan Profil Kepribadian User (${userProfile?.detected_formality || 'Formal'}). Jika user terbiasa santai (Gue/Lo, Gw/Lu), gunakan gaya casual-professional.
+- Meskipun tingkat formalitas disesuaikan (menggunakan Saya/Anda untuk user formal, atau Aku/Kamu/Gue/Lo untuk user santai), Anda **WAJIB tetap mempertahankan kepribadian yang ceria, ramah, optimis, dan penuh semangat**. Jangan biarkan bahasa formal membuat Anda terdengar kaku atau robotik. Tetaplah hangat dan ceria dalam menyampaikan saran!
         
-${lastActivityContext ? `\nKONTEKS AKTIVITAS: "${lastActivityContext}"\nSapa user dengan hangat.\n` : ''}`;
+*/
 
         const systemInstruction = coding_mode ? codingAgentPrompt : `
             ${generalPersonaPrompt}
@@ -558,16 +611,30 @@ ${lastActivityContext ? `\nKONTEKS AKTIVITAS: "${lastActivityContext}"\nSapa use
                - Step 2: 'search_files_and_knowledge' (Internal Documents).
                - Step 3: 'search_internet' (Public Facts OR Explicit User Request).
             7. SELF-CORRECTION: Abaikan berita tahun 2018-2022 jika mencari status pejabat saat ini. Prioritaskan Kabinet Merah Putih (2024-2029).
-            
-            INSTRUKSI TEKNIS:
-            - JANGAN PERNAH mengirimkan pesan "Mohon tunggu" atau narasi pencarian (seperti "Saya akan mencari...", "Mari saya akses...", dsb) di dalam jawaban akhir. 
-            - Jika Anda perlu mencatat proses berpikir, rencana pencarian, atau sapaan pembuka pencarian, Anda WAJIB membungkusnya dalam tag <thought>...</thought>.
+
+            !!! PROTOKOL URUTAN EKSEKUSI TOOL & STRUKTUR RESPONS (MUTLAK) !!!
+             - **TAHAP 1: EKSEKUSI ALAT (SILENT FIRST TURN)**: Jika Anda memutuskan untuk memanggil alat/tool apa pun (seperti 'search_files_and_knowledge' atau 'execute_sql_query'), Anda **DILARANG KERAS** menulis teks biasa, sapaan pembuka, janji pencarian, atau kalimat "Mohon tunggu" (seperti "Saya akan mencari...", "Tunggu sebentar...") di obrolan utama pada giliran pertama. Anda **WAJIB langsung melakukan pemanggilan tool secara instan** tanpa karakter teks biasa. Narasi pencarian atau rencana Anda hanya boleh ditulis secara internal di dalam tag <thought>...</thought>.
+             - **TAHAP 2: PENYAJIAN RESPONS ANALITIS (SETELAH TOOL SELESAI)**: Narasi pembuka yang ramah, pengantar konteks, tabel data utama, analisis wawasan mendalam (insights), dan kesimpulan **HANYA BOLEH Anda susun setelah seluruh tool selesai dieksekusi** dan Anda telah memegang data riilnya.
+             - Kegagalan mematuhi urutan ini (yaitu menulis teks janji pencarian di giliran pertama tanpa memanggil tool) akan merusak alur aplikasi dan membuat Anda terhenti tanpa memberikan data!
+
             - **AKURASI METADATA (PENTING)**: Saat melakukan kueri 'profil_pegawai', Anda WAJIB melakukan LEFT JOIN dengan 'master_bidang_instansi' (on bidang_id) dan 'master_jabatan' (on jabatan_id) untuk mendapatkan nama Bidang dan Jabatan yang valid.
+            - **STRATEGI KUERI KEGIATAN PER BIDANG (PENTING)**: 
+              * View 'v_rekap_kegiatan_harian' dan tabel 'kegiatan_harian_pegawai' **TIDAK memiliki** kolom 'bidang_id' atau 'nama_bidang'!
+              * Jika Anda ingin memfilter atau mencari kegiatan pegawai berdasarkan Bidang tertentu (seperti PPM [ID: 2], dll), Anda **WAJIB melakukan JOIN** dengan 'profil_pegawai' (pp) terlebih dahulu karena hanya tabel profil yang menyimpan relasi 'bidang_id'.
+              * Contoh kueri gabungan yang benar dan dijamin sukses:
+                \`SELECT pp.nama_lengkap, vr.nama_kegiatan, vr.tanggal FROM v_rekap_kegiatan_harian vr JOIN profil_pegawai pp ON vr.profil_pegawai_id = pp.id WHERE pp.bidang_id = 2 AND MONTH(vr.tanggal) = 3 AND YEAR(vr.tanggal) = 2026\`
             - **PENGGUNAAN ID**: Gunakan ID dari GLOSARIUM RESMI (misal: [ID: 2] untuk PPM) dalam kueri SQL Anda untuk akurasi filter 100%. DILARANG menebak ID.
             - **DILARANG HALUSINASI**: Jangan menuliskan "(Belum terisi)" jika Anda belum melakukan join ke tabel master. Jika data memang NULL setelah join, gunakan "Tanpa Bidang".
             - Gunakan 'execute_sql_query' untuk data spesifik per bidang.
             
-            PENTING - FORMAT JAWABAN:
+            PENTING - FORMAT JAWABAN & ANALISIS MENDALAM:
+            - **DILARANG TERLALU TO-THE-POINT / SINGKAT**: Jangan pernah menyajikan tabel data atau hasil kueri mentah begitu saja tanpa penjelasan. Anda adalah seorang Asisten Analis Senior Bapperida yang cerdas, sehingga Anda **WAJIB** memberikan narasi penjelasan yang kaya, interpretasi makna data, identifikasi tren, anomali, serta implikasi praktisnya terhadap instansi di setiap respon Anda.
+${nayaxaMindService.getNayaxaProtokolPrompt()}
+            - **STRUKTUR RESPONS ANALITIS PREMIUM**:
+                1. **Konteks & Pengantar**: Berikan pengantar ramah yang menjelaskan relevansi data yang sedang disajikan.
+                2. **Data Utama**: Sajikan data pokok secara rapi menggunakan Tabel Markdown, Grafik (melalui tool generate_chart jika relevan), atau List bertingkat yang indah.
+                3. **Analisis & Wawasan Mendalam (Insights)**: Berikan sub-bab khusus (misal: "### 📊 Analisis & Wawasan") untuk mengulas tren kenaikan/penurunan, perbandingan dengan periode lalu, efektivitas kinerja, atau anomali yang ditemukan.
+                4. **Rekomendasi / Kesimpulan**: Berikan ringkasan penutup taktis dan tawarkan bantuan lanjutan yang spesifik secara empatik.
             - SELALU gunakan format Markdown (Heading, Bold, Bullet Points, dan Tabel Markdown).
             - **DILARANG KERAS mengeluarkan output berupa kode SQL mentah (seperti SELECT, JOIN, atau WHERE) langsung ke dalam chat.** Kode SQL hanya boleh digunakan secara internal di dalam parameter fungsi 'execute_sql_query'. Anda harus menyajikan hasil eksekusinya dalam bentuk Tabel Markdown.
             - DILARANG JSON mentah di chat.
@@ -582,11 +649,12 @@ ${lastActivityContext ? `\nKONTEKS AKTIVITAS: "${lastActivityContext}"\nSapa use
             WAKTU AKTIF: Bulan ${month}, Tahun ${year}. Selalu gunakan nilai ini sebagai filter waktu default tanpa konfirmasi.
             
             CATATAN DOKUMEN & FILE: 
+            - **DOKUMEN TERLAMPIR / DIUNGGAH**: Jika user mengunggah file (PDF/Excel/Word/Gambar) dan meminta Anda menganalisisnya, **ANDA WAJIB LANGSUNG membaca, menganalisis, dan menyajikan hasilnya di pesan yang sama secara instan!** DILARANG KERAS beralasan "membutuhkan waktu untuk memproses", "izinkan saya menganalisis", atau "sembari saya membaca". Anda adalah AI yang memproses seketika, BUKAN manusia!
             - Jika user bertanya tentang dokumen, mencari file, atau meminta file spesifik ("Mana dokumen X?", "Minta file Y"), Anda WAJIB LANGSUNG menggunakan tool 'search_files_and_knowledge' tanpa basa-basi.
             - **ANDA WAJIB memberikan link download** untuk setiap hasil berkategori [FILE].
             - **DILARANG KERAS** memberikan jawaban tanpa link jika file ditemukan.
             - **DILARANG KERAS MENULIS LINK SECARA MANUAL** di dalam teks jawaban Anda (seperti http://localhost...). Cukup gunakan tool, dan sistem akan menampilkannya secara otomatis.
-            - **ON-DEMAND LEARNING**: Jika user meminta Anda untuk "Membaca", "Menganalisis", "Mempelajari", atau "Meringkas" dokumen yang ditemukan di Dashboard (bukan file yang baru saja diunggah di chat), gunakan tool 'analyze_dashboard_document' dengan ID file yang sesuai. Hasil analisis akan secara otomatis disimpan ke memori jangka panjang Anda (Nayaxa Intelligence) agar hemat token di masa depan.
+            - **ON-DEMAND LEARNING**: Jika user meminta Anda untuk "Membaca", "Menganalisis", "Mempelajari", atau "Meringkas" dokumen, dan dokumen tersebut ditemukan melalui pencarian, Anda **WAJIB LANGSUNG** menggunakan tool 'analyze_dashboard_document' dengan ID file yang sesuai pada giliran yang sama! DILARANG KERAS berhenti untuk meminta izin membaca atau meminta waktu kepada user. Ingat: Anda memproses seketika, jadi panggil tool tersebut berturut-turut tanpa jeda percakapan. Hasil analisis akan otomatis disimpan ke Nayaxa Intelligence.
             - Format Link: [Unduh (Nama File)](URL_DARI_TOOL). Letakkan link ini secara menonjol di bagian ATAS jawaban Anda dengan format tombol Markdown yang jelas.
             
             Identitas USER: ${identitasUser}
@@ -653,8 +721,18 @@ ${lastActivityContext ? `\nKONTEKS AKTIVITAS: "${lastActivityContext}"\nSapa use
                 parts.unshift({ text: userText });
 
                 const chat = model.startChat({ history: history, generationConfig: { maxOutputTokens: 8192 } });
-                let result = await chat.sendMessage(parts);
-                let response = result.response;
+                
+                // Use streaming version to show typing effect character-by-character
+                let resultStream = await chat.sendMessageStream(parts);
+                for await (const chunk of resultStream.stream) {
+                    try {
+                        const text = chunk.text();
+                        if (text && onStepCallback) {
+                            onStepCallback({ type: 'message_chunk', text });
+                        }
+                    } catch (e) {}
+                }
+                let response = await resultStream.response;
                 
                 const generatedChartMarkers = [];
                 const generatedDocLinks = [];
@@ -694,8 +772,16 @@ ${lastActivityContext ? `\nKONTEKS AKTIVITAS: "${lastActivityContext}"\nSapa use
                         }
                         callResponses.push({ functionResponse: { name: call.name, response: res } });
                     }
-                    result = await chat.sendMessage(callResponses);
-                    response = result.response;
+                    resultStream = await chat.sendMessageStream(callResponses);
+                    for await (const chunk of resultStream.stream) {
+                        try {
+                            const text = chunk.text();
+                            if (text && onStepCallback) {
+                                onStepCallback({ type: 'message_chunk', text });
+                            }
+                        } catch (e) {}
+                    }
+                    response = await resultStream.response;
                 }
 
                 let finalResponseText = response.text();
@@ -720,11 +806,18 @@ ${lastActivityContext ? `\nKONTEKS AKTIVITAS: "${lastActivityContext}"\nSapa use
                 attempts++;
                 lastError = error;
                 const status = error.status || error.response?.status;
-                const isOverloaded = status === 503 || status === 429 || error.message?.includes('503') || error.message?.includes('429');
                 
-                if (isOverloaded && attempts < 2) {
-                    console.warn(`[Gemini] Overloaded (Attempt ${attempts}). Retrying with alternate key...`);
-                    apiKey = await getApiKey(apiKey);
+                if (attempts < 3) {
+                    console.warn(`[Gemini] Error encountered (Attempt ${attempts}): ${error.message}. Retrying alternate keys...`);
+                    
+                    if (attempts === 2) {
+                        // ULTIMATE FALLBACK: Jika kunci gratisan di database bermasalah, gunakan Kunci Utama Berbayar di .env
+                        console.warn(`[Gemini] Free DB keys failed. Swapping to PAID GEMINI KEY from .env...`);
+                        apiKey = process.env.GEMINI_API_KEY;
+                    } else {
+                        // Upaya kedua: Cari kunci gratisan sehat lainnya di database
+                        apiKey = await getApiKey(apiKey);
+                    }
                     continue;
                 }
                 

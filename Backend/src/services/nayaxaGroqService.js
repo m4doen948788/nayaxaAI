@@ -12,7 +12,7 @@ const codeAgent = require('./codeAgentService');
 const nayaxaMindService = require('./nayaxaMindService');
 
 /**
- * DeepSeek Service - Stable v4.5.3
+ * Groq Service - Stable v4.5.3
  * Standard tool-calling service for Nayaxa Engine.
  */
 
@@ -168,7 +168,7 @@ const toolFunctions = {
 
 
 
-const DEEPSEEK_TOOLS = [
+const GROQ_TOOLS = [
     { 
         type: "function", 
         function: { 
@@ -363,22 +363,6 @@ const DEEPSEEK_TOOLS = [
                 required: ["file_hash", "sub_topic", "insight_content", "user_query"] 
             } 
         } 
-    },
-    { 
-        type: "function", 
-        function: { 
-            name: "get_nearby_places", 
-            description: "Mencari tempat terdekat (restoran, apotek, faskes, dll) berdasarkan koordinat Latitude dan Longitude user.", 
-            parameters: { 
-                type: "object", 
-                properties: { 
-                    lat: { type: "number", description: "Latitude user" },
-                    lng: { type: "number", description: "Longitude user" },
-                    category: { type: "string", description: "Kategori tempat (misal: 'Rumah Makan Padang', 'Apotek')" }
-                }, 
-                required: ["lat", "lng", "category"] 
-            } 
-        } 
     }
 ];
 
@@ -396,7 +380,7 @@ const CODING_AGENT_TOOLS = [
         name: "read_code_file",
         description: "Membaca isi lengkap sebuah file kode. Gunakan ini untuk menganalisis bug, memahami logika, atau sebelum membuat perubahan.",
         parameters: { type: "object", properties: {
-            file_path: { type: "string", description: "Path absolut file yang ingin dibaca. Contoh: D:\\nayaxa-engine\\Backend\\src\\services\\nayaxaDeepSeekService.js" }
+            file_path: { type: "string", description: "Path absolut file yang ingin dibaca. Contoh: D:\\nayaxa-engine\\Backend\\src\\services\\nayaxaGroqService.js" }
         }, required: ["file_path"] }
     }},
     { type: "function", function: {
@@ -439,7 +423,23 @@ const CODING_AGENT_TOOLS = [
         parameters: { type: "object", properties: {
             query: { type: "string", description: "Query SQL DML atau DDL yang akan dieksekusi secara langsung terhadap database." }
         }, required: ["query"] }
-    }}
+    }},
+    { 
+        type: "function", 
+        function: { 
+            name: "get_nearby_places", 
+            description: "Mencari tempat terdekat (restoran, apotek, faskes, dll) berdasarkan koordinat Latitude dan Longitude user.", 
+            parameters: { 
+                type: "object", 
+                properties: { 
+                    lat: { type: "number", description: "Latitude user" },
+                    lng: { type: "number", description: "Longitude user" },
+                    category: { type: "string", description: "Kategori tempat (misal: 'Rumah Makan Padang', 'Apotek')" }
+                }, 
+                required: ["lat", "lng", "category"] 
+            } 
+        } 
+    }
 ];
 
 const TOOL_STEP_LABELS = {
@@ -516,8 +516,8 @@ const isSummaryRequest = (query) => {
 // Simple non-streaming DeepSeek Flash call for background summarization
 const callDeepSeekNonStream = async (prompt, apiKey) => {
     try {
-        const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-            model: "deepseek-v4-flash",
+        const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+            model: "llama-3.3-70b-versatile",
             messages: [{ role: "user", content: prompt }],
             temperature: 0.1,
             max_tokens: 4000
@@ -697,6 +697,7 @@ const retrieveHybridContext = async (fileHash, query, onStepCallback = null) => 
     return context;
 };
 
+
 /**
  * Loads dynamic configurations, active personas, routes navigation, and dynamic AI tools from database.
  * Extremely robust fallback is implemented to guarantee zero-downtime if DB is unreachable.
@@ -750,7 +751,7 @@ const loadDynamicEngineConfig = async (instansiId) => {
     } catch (err) {
         console.error('[loadDynamicEngineConfig] Critical error loading dynamic settings, falling back to static defaults:', err);
         return {
-            configMap: { ENABLE_COLLABORATIVE_MEMORY: '1', KNOWLEDGE_SATURATION_THRESHOLD: '5', DEFAULT_LLM_MODEL: 'deepseek-v4-flash' },
+            configMap: { ENABLE_COLLABORATIVE_MEMORY: '1', KNOWLEDGE_SATURATION_THRESHOLD: '5', DEFAULT_LLM_MODEL: 'llama-3.3-70b-versatile' },
             activePersonaPrompt: null,
             routesGuide: '',
             dynamicTools: null
@@ -758,7 +759,7 @@ const loadDynamicEngineConfig = async (instansiId) => {
     }
 };
 
-const nayaxaDeepSeekService = {
+const nayaxaGroqService = {
     chatWithNayaxa: async (userMessage, files, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '', nama_instansi = 'N/A', personaPromptSnippet = '', userProfile = null, lastActivityContext = null, coding_mode = false, session_id = null, onStepCallback = null, signal = null) => {
         if (signal?.aborted) return 'Request aborted.';
         try {
@@ -767,7 +768,7 @@ const nayaxaDeepSeekService = {
             const greetings = ['hi', 'hi nayaxa', 'halo', 'hallo', 'hei', 'hey', 'p', 'ping', 'pagi', 'siang', 'sore', 'malam', 'assalamualaikum', 'selamat pagi', 'selamat siang', 'selamat sore', 'selamat malam', 'halo nayaxa', 'hallo nayaxa'];
             
             if (greetings.includes(cleanMsg) && (!files || files.length === 0)) {
-                console.log(`[DeepSeek] Standalone greeting detected: "${userMessage}". Intercepting and returning local response instantly.`);
+                console.log(`[Groq] Standalone greeting detected: "${userMessage}". Intercepting and returning local response instantly.`);
                 
                 // Personalize based on profile or name
                 const displayName = userProfile?.nama_lengkap || user_name || "Sobat Nayaxa";
@@ -794,7 +795,7 @@ const nayaxaDeepSeekService = {
                 return reply;
             }
 
-            const apiKey = process.env.NAYAXA_DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY;
+            const apiKey = process.env.GROQ_API_KEY;
 
             // Load dynamic configurations, personas, and tools
             const dynamicEngine = await loadDynamicEngineConfig(instansi_id);
@@ -901,10 +902,11 @@ const nayaxaDeepSeekService = {
             
             CATATAN DOKUMEN & FILE: 
             - Jika user meminta laporan baru, gunakan tool 'generate_document'. 
-             !!! PROTOKOL URUTAN EKSEKUSI TOOL & STRUKTUR RESPONS (MUTLAK) !!!
+                         !!! PROTOKOL URUTAN EKSEKUSI TOOL & STRUKTUR RESPONS (MUTLAK) !!!
              - **TAHAP 1: EKSEKUSI ALAT (SILENT FIRST TURN)**: Jika Anda memutuskan untuk memanggil alat/tool apa pun (seperti 'search_files_and_knowledge' atau 'execute_sql_query'), Anda **DILARANG KERAS** menulis teks biasa, sapaan pembuka, janji pencarian, atau kalimat "Mohon tunggu" (seperti "Saya akan mencari...", "Tunggu sebentar...") di obrolan utama pada giliran pertama. Anda **WAJIB langsung melakukan pemanggilan tool secara instan** tanpa karakter teks biasa. Narasi pencarian atau rencana Anda hanya boleh ditulis secara internal di dalam tag <thought>...</thought>.
              - **TAHAP 2: PENYAJIAN RESPONS ANALITIS (SETELAH TOOL SELESAI)**: Narasi pembuka yang ramah, pengantar konteks, tabel data utama, analisis wawasan mendalam (insights), dan kesimpulan **HANYA BOLEH Anda susun setelah seluruh tool selesai dieksekusi** dan Anda telah memegang data riilnya.
              - Kegagalan mematuhi urutan ini (yaitu menulis teks janji pencarian di giliran pertama tanpa memanggil tool) akan merusak alur aplikasi dan membuat Anda terhenti tanpa memberikan data!
+
             - Tool ini akan mencari di database file (DOKUMEN_UPLOAD) dan database pengetahuan (NAYAXA_KNOWLEDGE).
             - **ANDA WAJIB memberikan link download** untuk setiap hasil berkategori [FILE].
             - **DILARANG KERAS** memberikan jawaban tanpa link jika file ditemukan.
@@ -1070,7 +1072,7 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                         const buffer = Buffer.from(cleanB64, 'base64');
                         const fileHash = crypto.createHash('sha256').update(buffer).digest('hex');
 
-                        console.log(`[DeepSeek] Processing document "${fileName}" (Hash: ${fileHash}). Checking cache...`);
+                        console.log(`[Groq] Processing document "${fileName}" (Hash: ${fileHash}). Checking cache...`);
                         if (onStepCallback) onStepCallback({ icon: '🔍', label: `Memverifikasi sidik jari dokumen: ${fileName}...` });
 
                         // 2. Query cache database
@@ -1087,11 +1089,11 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                             extractedText = cachedRows[0].extracted_text;
                             cachedSummary = cachedRows[0].master_summary;
                             isCacheHit = true;
-                            console.log(`[DeepSeek] Cache HIT for "${fileName}" (${fileHash})!`);
+                            console.log(`[Groq] Cache HIT for "${fileName}" (${fileHash})!`);
                             if (onStepCallback) onStepCallback({ icon: '⚡', label: `Dokumen terdeteksi! Memuat instan dari cache lokal...` });
                         } else {
                             // Cache MISS: Parse physical file
-                            console.log(`[DeepSeek] Cache MISS for "${fileName}". Parsing file physically...`);
+                            console.log(`[Groq] Cache MISS for "${fileName}". Parsing file physically...`);
                             if (onStepCallback) onStepCallback({ icon: '📂', label: `Mengekstrak berkas baru: ${fileName}...` });
 
                             if (isExcel || isCSV || extension === 'xlsx' || extension === 'xls' || extension === 'csv') {
@@ -1161,7 +1163,7 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                         }
 
                     } catch (err) {
-                        console.error(`[DeepSeek] Error processing document ${fileName}:`, err);
+                        console.error(`[Groq] Error processing document ${fileName}:`, err);
                         if (onStepCallback) onStepCallback({ icon: '❌', label: `Gagal membaca dokumen: ${err.message}` });
                         fileContext = (fileContext ? fileContext + '\n\n' : '') + 
                             `DATA FILE (ERROR) - NAMA FILE: "${fileName}":\nGagal memproses file: ${err.message}.`;
@@ -1170,7 +1172,7 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                     const cleanBase64 = base64.includes('base64,') ? base64.split('base64,')[1] : base64;
                     firstImage = { mimeType, data: cleanBase64 };
                 } else {
-                    console.warn(`[DeepSeek] Unsupported file type detected or skipped: ${mimeType} (${file.name})`);
+                    console.warn(`[Groq] Unsupported file type detected or skipped: ${mimeType} (${file.name})`);
                 }
             }
 
@@ -1223,15 +1225,15 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
             }
 
             const activeTools = coding_mode 
-                ? [...(dynamicEngine.dynamicTools || DEEPSEEK_TOOLS), ...CODING_AGENT_TOOLS] 
-                : (dynamicEngine.dynamicTools || DEEPSEEK_TOOLS);
+                ? [...(dynamicEngine.dynamicTools || GROQ_TOOLS), ...CODING_AGENT_TOOLS] 
+                : (dynamicEngine.dynamicTools || GROQ_TOOLS);
 
-            const targetModel = process.env.DEEPSEEK_MODEL || dynamicEngine.configMap.DEFAULT_LLM_MODEL || "deepseek-v4-flash";
+            const targetModel = process.env.GROQ_MODEL || dynamicEngine.configMap.DEFAULT_LLM_MODEL || "llama-3.3-70b-versatile";
 
             // --- STREAMING-ENABLED API CALL ---
-            const callDeepSeekStream = async (msgs, isToolLoop = false) => {
-                console.log(`[DeepSeek] Requesting model: ${targetModel} (Loop: ${isToolLoop ? 'Yes' : 'No'})`);
-                const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+            const callGroqStream = async (msgs, isToolLoop = false) => {
+                console.log(`[Groq] Requesting model: ${targetModel} (Loop: ${isToolLoop ? 'Yes' : 'No'})`);
+                const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
                     model: targetModel, 
                     messages: msgs,
                     tools: !isToolLoop ? activeTools : undefined, // Tools only on first turn or as needed
@@ -1276,7 +1278,7 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                                 // LOG JAWABAN SERVER (Hanya sekali per request)
                                 if (data.model && !finishReason) {
                                     if (!global.lastLoggedModel || global.lastLoggedModel !== data.model) {
-                                        console.log(`[DeepSeek] Server response model: ${data.model}`);
+                                        console.log(`[Groq] Server response model: ${data.model}`);
                                         global.lastLoggedModel = data.model;
                                     }
                                 }
@@ -1335,7 +1337,7 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
             });
 
             // --- INITIAL CALL ---
-            const initialStream = await callDeepSeekStream(messages);
+            const initialStream = await callGroqStream(messages);
             const initialRes = await processStream(initialStream.data);
             let messageContent = initialRes.content;
             let lastFinishReason = initialRes.finish_reason;
@@ -1439,7 +1441,7 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                 }
                 
                 // Start next turn with streaming
-                const nextStream = await callDeepSeekStream(messages, combinedToolCalls.length === 0);
+                const nextStream = await callGroqStream(messages, combinedToolCalls.length === 0);
                 const nextRes = await processStream(nextStream.data);
                 const turnContent = nextRes.content;
                 lastFinishReason = nextRes.finish_reason;
@@ -1488,13 +1490,13 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
             if (generatedChartMarkers.length > 0) text += "\n\n" + generatedChartMarkers.join("\n\n");
             return text;
         } catch (error) {
-            console.error('DeepSeek API Error:', error.message);
+            console.error('Groq API Error:', error.message);
             if (error.response?.data?.on) {
                 error.response.data.on('data', chunk => {
-                    console.error('DeepSeek 400 Detail:', chunk.toString());
+                    console.error('Groq 400 Detail:', chunk.toString());
                 });
             } else if (error.response?.data) {
-                console.error('DeepSeek 400 Detail:', JSON.stringify(error.response.data));
+                console.error('Groq 400 Detail:', JSON.stringify(error.response.data));
             }
             
             // Re-throw critical errors for the controller's fallback mechanism
@@ -1507,4 +1509,4 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
     }
 };
 
-module.exports = nayaxaDeepSeekService;
+module.exports = nayaxaGroqService;

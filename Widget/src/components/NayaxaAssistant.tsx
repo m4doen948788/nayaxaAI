@@ -408,7 +408,7 @@ export default function NayaxaAssistant({
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
             onPaste={handlePaste}
             placeholder="Tanya Nayaxa..."
-          className="flex-1 bg-slate-50/50 border border-slate-200/60 rounded-2xl py-3 px-4 text-[14px] focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none placeholder:text-slate-400"
+          className="flex-1 bg-slate-50/50 border border-slate-200/60 rounded-2xl py-3 px-4 text-[16px] md:text-[14px] focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none placeholder:text-slate-400"
         />
         <motion.button 
             whileHover={{ scale: 1.05 }}

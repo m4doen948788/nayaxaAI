@@ -95,29 +95,54 @@ const exportService = {
 
             doc.pipe(s);
             
-            // --- PROFESSIONAL HEADER ---
-            doc.rect(0, 0, 612, 80).fill('#1e1b4b'); // Dark Navy Header
-            doc.fillColor('#ffffff').fontSize(22).font('Helvetica-Bold').text('NAYAXA INTELLIGENCE', 50, 25);
-            doc.fontSize(10).font('Helvetica').text('Badan Perencanaan Pembangunan Riset dan Inovasi Daerah', 50, 52);
-            doc.fontSize(8).text('Nayaxa v4.6.1 Stable Build', 400, 52, { align: 'right' });
+            // Start writing from the top margin
+            doc.x = 50;
+            doc.y = 50;
 
-            // Move cursor below header
-            doc.moveDown(5);
+            // Content (Smart PDFKit Parser)
+            let cleanRaw = content.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, '');
+            // Collapse 3 or more consecutive newlines into exactly 2 (which equals 1 empty line spacing) and trim trailing spaces
+            cleanRaw = cleanRaw.replace(/\n{3,}/g, '\n\n').trim();
+            const lines = cleanRaw.split('\n');
             
-            // Title
-            const displayTitle = filename.replace('.pdf', '').replace(/_/g, ' ').toUpperCase();
-            doc.fillColor('#1e293b').fontSize(16).font('Helvetica-Bold').text(displayTitle, { align: 'center' });
-            doc.moveDown(0.5);
-            doc.strokeColor('#e2e8f0').lineWidth(1).moveTo(50, doc.y).lineTo(560, doc.y).stroke();
-            doc.moveDown(1.5);
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i].trim();
+                if (!line) { 
+                    doc.moveDown(0.5); 
+                    continue; 
+                }
 
-            // Content
-            const cleanContent = sanitizeText(content);
-            doc.fillColor('#334155').fontSize(11).font('Helvetica').text(cleanContent, {
-                align: 'justify',
-                lineGap: 6,
-                paragraphGap: 10
-            });
+                // Strip bold markers for PDF (PDFKit doesn't support easy inline bold)
+                let cleanLine = line.replace(/\*\*/g, '').replace(/__/g, '').replace(/`/g, '');
+
+                // Smart Heading Detection
+                if (cleanLine.startsWith('# ')) {
+                    doc.font('Helvetica-Bold').fontSize(16).fillColor('#1E293B').text(cleanLine.replace(/^# /, ''), { align: 'left' });
+                    doc.moveDown(0.3);
+                } else if (cleanLine.startsWith('## ')) {
+                    doc.font('Helvetica-Bold').fontSize(14).fillColor('#4F46E5').text(cleanLine.replace(/^## /, ''), { align: 'left' });
+                    doc.moveDown(0.3);
+                } else if (cleanLine.startsWith('### ')) {
+                    doc.font('Helvetica-Bold').fontSize(12).fillColor('#334155').text(cleanLine.replace(/^### /, ''), { align: 'left' });
+                    doc.moveDown(0.3);
+                } else if (/^[0-9]+\.\s+[A-Z\s]+$/.test(cleanLine)) { 
+                    // Matches "1. DATA PENYEBAB" (Numbered + ALL CAPS)
+                    doc.font('Helvetica-Bold').fontSize(16).fillColor('#1E293B').text(cleanLine, { align: 'left' });
+                    doc.moveDown(0.3);
+                } else if (/^[A-Z]\.\s+[A-Z\s]+$/.test(cleanLine)) {
+                    // Matches "A. PENDAHULUAN"
+                    doc.font('Helvetica-Bold').fontSize(14).fillColor('#4F46E5').text(cleanLine, { align: 'left' });
+                    doc.moveDown(0.3);
+                } else if (/^[-*]\s/.test(cleanLine)) {
+                    doc.font('Helvetica').fontSize(11).fillColor('#334155').text('•  ' + cleanLine.replace(/^[-*]\s/, ''), { align: 'justify', indent: 20, lineGap: 2 });
+                } else if (/^[0-9]+\.\s/.test(cleanLine)) {
+                    doc.font('Helvetica').fontSize(11).fillColor('#334155').text(cleanLine, { align: 'justify', indent: 20, lineGap: 2 });
+                } else if (cleanLine.startsWith('|')) {
+                    doc.font('Courier').fontSize(9).fillColor('#475569').text(cleanLine, { align: 'left', indent: 10 });
+                } else {
+                    doc.font('Helvetica').fontSize(11).fillColor('#334155').text(cleanLine, { align: 'justify', lineGap: 4 });
+                }
+            }
             
             // Footer
             const range = doc.bufferedPageRange(); 
@@ -322,21 +347,7 @@ const exportService = {
             }
         }
 
-        const doc = new Document({
-            numbering: {
-                config: Array.from({ length: listCounter }, (_, idx) => ({
-                    reference: `numbered-list-${idx + 1}`,
-                    levels: [
-                        {
-                            level: 0,
-                            format: "decimal",
-                            text: "%1.",
-                            alignment: AlignmentType.START,
-                            style: { paragraph: { indent: { left: 720, hanging: 360 } } },
-                        },
-                    ],
-                })),
-            },
+        const docOptions = {
             styles: {
                 default: {
                     document: {
@@ -388,7 +399,26 @@ const exportService = {
                 },
                 children: children
             }]
-        });
+        };
+
+        if (listCounter > 0) {
+            docOptions.numbering = {
+                config: Array.from({ length: listCounter }, (_, idx) => ({
+                    reference: `numbered-list-${idx + 1}`,
+                    levels: [
+                        {
+                            level: 0,
+                            format: "decimal",
+                            text: "%1.",
+                            alignment: AlignmentType.START,
+                            style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+                        },
+                    ],
+                })),
+            };
+        }
+
+        const doc = new Document(docOptions);
         const sanitized = filename.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
         const safe = sanitized.endsWith('.docx') ? sanitized : `${sanitized}.docx`;
         const p = path.join(EXPORT_DIR, safe);

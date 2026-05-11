@@ -1,5 +1,6 @@
 const nayaxaGemini = require('../services/nayaxaGeminiService');
 const nayaxaDeepSeek = require('../services/nayaxaDeepSeekService');
+const nayaxaGroq = require('../services/nayaxaGroqService');
 const nayaxaStandalone = require('../services/nayaxaStandalone');
 const personaService = require('../services/personaService');
 const dbNayaxa = require('../config/dbNayaxa');
@@ -201,16 +202,11 @@ const nayaxaController = {
             );
             const isEditorFeedback = message.includes('[NAYAXA_EDITOR_FEEDBACK]');
             
-            // ROUTING LOGIC:
-            // 1. If contains IMAGES or SCANNED PDFs (OCR required) -> Always Use Gemini (Vision)
-            // 2. Otherwise if it's Editor Feedback -> Prefer DeepSeek (for doc tools)
-            // 3. Otherwise if DeepSeek is enabled -> Use DeepSeek (Absolute priority for text/logic)
-            let isDeepSeekPrefered = isDeepSeekEnabled && !hasImages && !hasScannedPdf;
-            
-            // Force DeepSeek for text-only queries
-            if (!hasImages && !hasFiles && isDeepSeekEnabled) {
-                isDeepSeekPrefered = true;
-            }
+            // ROUTING LOGIC (SMART ECONOMY v4.7.0):
+            // We now have a pool of 5 active free Gemini API keys (yielding 75 RPM for free).
+            // To minimize operational costs to EXACTLY Rp 0, we prefer Gemini for ALL queries.
+            // DeepSeek will act as our premium, bulletproof fallback if all Gemini keys are rate-limited or exhausted.
+            let isDeepSeekPrefered = false;
 
             const tryGemini = async (isFallback = false) => {
                 brain = isFallback ? 'Gemini (Fallback)' : 'Gemini';
@@ -219,6 +215,21 @@ const nayaxaController = {
                      '', current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet, 
                      userProfile, lastActivityContext, !!coding_mode, activeSessionId
                 );
+            };
+
+            const tryGroq = async (isFallback = false) => {
+                brain = isFallback ? 'Groq Llama 3.3 (Fallback)' : 'Groq Llama 3.3';
+                const textOnlyAttachments = attachmentList.filter(f => !f.mimeType?.includes('image'));
+                try {
+                    return await nayaxaGroq.chatWithNayaxa(
+                        message, textOnlyAttachments, instansi_id, month, year, history, user_name, profil_id, 
+                        '', current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet, 
+                        userProfile, lastActivityContext, !!coding_mode, activeSessionId
+                    );
+                } catch (err) {
+                    console.error('[Groq Service Error]:', err.message);
+                    throw err;
+                }
             };
 
             const tryDeepSeek = async (isFallback = false) => {
@@ -245,29 +256,33 @@ const nayaxaController = {
                 } catch (dsError) {
                     console.warn(`[Nayaxa] DeepSeek issue: ${dsError.message}. Falling back to Gemini...`);
                     try {
-                        // Fallback to Gemini only if absolutely necessary
                         responseText = await tryGemini(true);
                     } catch (geminiError) {
-                        // If backup engine also fails (e.g. leaked key), throw a friendly error
                         console.error('[Nayaxa] Both engines failed:', geminiError.message);
-                        if (geminiError.message?.includes('leaked')) {
-                            throw new Error("Nayaxa Engine sedang mengalami gangguan teknis pada sistem cadangan. Kami sedang memperbaikinya. Mohon gunakan kueri singkat sementara waktu.");
-                        }
                         throw geminiError;
                     }
                 }
             } else {
                 try {
-                    // Try Gemini first for images or if DeepSeek is disabled
+                    // Try Gemini first as main brain
                     responseText = await tryGemini();
                 } catch (geminiError) {
-                    const status = geminiError.status || geminiError.response?.status;
-                    const isGeminiOverloaded = status === 503 || status === 429 || 
-                                              geminiError.message?.includes('503') || geminiError.message?.includes('429') ||
-                                              geminiError.message?.includes('leaked');
+                    const isGroqEnabled = process.env.GROQ_ENABLED === 'true';
                     
-                    if (isGeminiOverloaded && isDeepSeekEnabled && !hasImages) {
-                        console.warn('[Nayaxa] Gemini failed/leaked, falling back to DeepSeek...');
+                    if (isGroqEnabled && !hasImages) {
+                        console.warn('[Nayaxa] Gemini failed, falling back to Groq Llama 3.3...');
+                        try {
+                            responseText = await tryGroq(true);
+                        } catch (groqError) {
+                            if (isDeepSeekEnabled) {
+                                console.warn('[Nayaxa] Groq failed, falling back to DeepSeek...');
+                                responseText = await tryDeepSeek(true);
+                            } else {
+                                throw groqError;
+                            }
+                        }
+                    } else if (isDeepSeekEnabled && !hasImages) {
+                        console.warn('[Nayaxa] Gemini failed, falling back to DeepSeek...');
                         responseText = await tryDeepSeek(true);
                     } else {
                         throw geminiError;
@@ -509,9 +524,10 @@ const nayaxaController = {
             );
             const isDeepSeekEnabled = process.env.DEEPSEEK_ENABLED === 'true';
             
-            // ROUTING: Use Gemini for images or scanned PDFs, otherwise try DeepSeek
-            const useDeepSeek = isDeepSeekEnabled && !hasImages && !hasScannedPdf;
-            console.log(`[Trace] Routing decision: ${useDeepSeek ? 'DeepSeek' : 'Gemini'} | hasImages=${hasImages}, hasScannedPdf=${hasScannedPdf}`);
+            // ROUTING (SMART ECONOMY v4.7.0): Prefer Gemini Free Tier to keep costs at Rp 0.
+            // DeepSeek will act as our premium, bulletproof fallback if Gemini fails.
+            const useDeepSeek = false;
+            console.log(`[Trace] Routing decision (Streaming): ${useDeepSeek ? 'DeepSeek' : 'Gemini'} | hasImages=${hasImages}, hasScannedPdf=${hasScannedPdf}`);
 
             try {
                 if (useDeepSeek) {
@@ -543,8 +559,32 @@ const nayaxaController = {
                         userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal
                     );
                 } else {
-                    // Gemini failed, try DeepSeek if no images
-                    if (!hasImages && isDeepSeekEnabled) {
+                    // Gemini failed!
+                    const isGroqEnabled = process.env.GROQ_ENABLED === 'true';
+                    if (isGroqEnabled && !hasImages) {
+                        brainUsed = 'Groq Llama 3.3 (Fallback)';
+                        sendEvent('step', { icon: '🔄', label: 'Mempersiapkan otak cadangan Groq Llama 3.3...' });
+                        try {
+                            responseText = await nayaxaGroq.chatWithNayaxa(
+                                message, attachmentList, instansi_id, month, year, history, user_name, profil_id,
+                                blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet,
+                                userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal
+                            );
+                        } catch (groqErr) {
+                            console.error('[Nayaxa_SSE_Error] Groq fallback failed, trying DeepSeek...', groqErr.message);
+                            if (isDeepSeekEnabled) {
+                                brainUsed = 'DeepSeek (Fallback)';
+                                sendEvent('step', { icon: '🔄', label: 'Sedang mencari rute alternatif...' });
+                                responseText = await nayaxaDeepSeek.chatWithNayaxa(
+                                    message, [], instansi_id, month, year, history, user_name, profil_id,
+                                    blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet,
+                                    userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal
+                                );
+                            } else {
+                                throw groqErr;
+                            }
+                        }
+                    } else if (isDeepSeekEnabled && !hasImages) {
                         brainUsed = 'DeepSeek (Fallback)';
                         sendEvent('step', { icon: '🔄', label: 'Sedang mencari rute alternatif...' });
                         responseText = await nayaxaDeepSeek.chatWithNayaxa(
