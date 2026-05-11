@@ -38,3 +38,13 @@ Widget/dist/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Test and Scratch Scripts
+Backend/check_*
+Backend/scratch_*
+Backend/scratch/
+scratch/
+Backend/verify_*
+Backend/test_*
+Backend/get_doc_response.js
+Backend/insert_monitor_menu.js
