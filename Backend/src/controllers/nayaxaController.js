@@ -601,7 +601,7 @@ const nayaxaController = {
             if (signal.aborted) return;
 
             // Save response
-            const contentToSave = responseText
+            const contentToSave = (responseText || "")
                 .replace(/<thought>[\s\S]*?<\/thought>/gi, '')
                 .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
                 .replace(/\[NAYAXA_CHART\][\s\S]*?\[\/NAYAXA_CHART\]/g, '[Grafik]')
@@ -614,16 +614,17 @@ const nayaxaController = {
             // Send final response
             // --- CENTRALIZED CLEANUP ---
             // Remove any leaked technical tags or DSML robot-speak
-            responseText = responseText.replace(/<thought>[\s\S]*?<\/thought>/gi, '');
-            responseText = responseText.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
-            responseText = responseText.replace(/<\|[\s\S]*?\|>/g, '');
-            responseText = responseText.replace(/<[\s\S]*?DSML[\s\S]*?>/gi, '');
-            responseText = responseText.replace(/<[\s\S]*?function_calls[\s\S]*?>/gi, '');
-            responseText = responseText.replace(/<[\s\S]*?invoke[\s\S]*?>/gi, '');
-            responseText = responseText.replace(/<[\s\S]*?parameter[\s\S]*?>/gi, '');
-            responseText = responseText.trim();
+            let responseTextString = responseText || "";
+            responseTextString = responseTextString.replace(/<thought>[\s\S]*?<\/thought>/gi, '');
+            responseTextString = responseTextString.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
+            responseTextString = responseTextString.replace(/<\|[\s\S]*?\|>/g, '');
+            responseTextString = responseTextString.replace(/<[\s\S]*?DSML[\s\S]*?>/gi, '');
+            responseTextString = responseTextString.replace(/<[\s\S]*?function_calls[\s\S]*?>/gi, '');
+            responseTextString = responseTextString.replace(/<[\s\S]*?invoke[\s\S]*?>/gi, '');
+            responseTextString = responseTextString.replace(/<[\s\S]*?parameter[\s\S]*?>/gi, '');
+            responseTextString = responseTextString.trim();
 
-            sendEvent('done', { text: responseText, brain_used: brainUsed, session_id: activeSessionId });
+            sendEvent('done', { text: responseTextString, brain_used: brainUsed, session_id: activeSessionId });
             res.end();
 
         } catch (error) {

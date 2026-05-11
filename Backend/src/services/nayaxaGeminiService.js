@@ -669,7 +669,7 @@ ${nayaxaMindService.getNayaxaProtokolPrompt()}
         `;
 
 
-        while (attempts < 2) {
+        while (attempts < 3) {
             try {
                 const genAI = new GoogleGenerativeAI(apiKey);
                 const model = genAI.getGenerativeModel({ 
