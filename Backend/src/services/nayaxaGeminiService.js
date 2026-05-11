@@ -535,8 +535,8 @@ const checkNeedSchema = (userMessage, prevHistory = [], coding_mode = false) => 
 };
 
 const nayaxaGeminiService = {
-    chatWithNayaxa: async (userMessage, files, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '', nama_instansi = 'N/A', personaPromptSnippet = '', userProfile = null, lastActivityContext = null, coding_mode = false, session_id = null, onStepCallback = null, signal = null) => {
-        let apiKey = await getApiKey();
+    chatWithNayaxa: async (userMessage, files, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '', nama_instansi = 'N/A', personaPromptSnippet = '', userProfile = null, lastActivityContext = null, coding_mode = false, session_id = null, onStepCallback = null, signal = null, forcePaidKey = false) => {
+        let apiKey = forcePaidKey ? process.env.GEMINI_API_KEY : await getApiKey();
         let attempts = 0;
         let lastError = null;
 
@@ -669,7 +669,8 @@ ${nayaxaMindService.getNayaxaProtokolPrompt()}
         `;
 
 
-        while (attempts < 3) {
+        const maxAttempts = forcePaidKey ? 1 : 2;
+        while (attempts < maxAttempts) {
             try {
                 const genAI = new GoogleGenerativeAI(apiKey);
                 const model = genAI.getGenerativeModel({ 
@@ -807,17 +808,11 @@ ${nayaxaMindService.getNayaxaProtokolPrompt()}
                 lastError = error;
                 const status = error.status || error.response?.status;
                 
-                if (attempts < 3) {
+                if (attempts < maxAttempts) {
                     console.warn(`[Gemini] Error encountered (Attempt ${attempts}): ${error.message}. Retrying alternate keys...`);
                     
-                    if (attempts === 2) {
-                        // ULTIMATE FALLBACK: Jika kunci gratisan di database bermasalah, gunakan Kunci Utama Berbayar di .env
-                        console.warn(`[Gemini] Free DB keys failed. Swapping to PAID GEMINI KEY from .env...`);
-                        apiKey = process.env.GEMINI_API_KEY;
-                    } else {
-                        // Upaya kedua: Cari kunci gratisan sehat lainnya di database
-                        apiKey = await getApiKey(apiKey);
-                    }
+                    // Upaya kedua: Cari kunci gratisan sehat lainnya di database
+                    apiKey = await getApiKey(apiKey);
                     continue;
                 }
                 

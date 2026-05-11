@@ -544,56 +544,81 @@ const nayaxaController = {
                     responseText = await nayaxaGemini.chatWithNayaxa(
                         message, attachmentList, instansi_id, month, year, history, user_name, profil_id,
                         blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet,
-                        userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal
+                        userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal,
+                        false // forcePaidKey = false (Free first)
                     );
                 }
             } catch (err) {
                 console.error('[Nayaxa_SSE_Error] Primary model failed, trying fallback...', err.message);
                 
                 if (brainUsed === 'DeepSeek') {
-                    brainUsed = 'Gemini (Fallback)';
-                    sendEvent('step', { icon: '🔄', label: 'Menyiapkan otak cadangan untuk analisis...' });
-                    responseText = await nayaxaGemini.chatWithNayaxa(
-                        message, attachmentList, instansi_id, month, year, history, user_name, profil_id,
-                        blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet,
-                        userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal
-                    );
+                    try {
+                        brainUsed = 'Gemini (Fallback)';
+                        sendEvent('step', { icon: '🔄', label: 'Menyiapkan otak cadangan untuk analisis...' });
+                        responseText = await nayaxaGemini.chatWithNayaxa(
+                            message, attachmentList, instansi_id, month, year, history, user_name, profil_id,
+                            blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet,
+                            userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal,
+                            false
+                        );
+                    } catch (gemFreeErr) {
+                        console.error('[Nayaxa_SSE_Error] Gemini Free fallback failed, trying Gemini Paid...', gemFreeErr.message);
+                        brainUsed = 'Gemini Paid (Fallback)';
+                        sendEvent('step', { icon: '🔄', label: 'Mengaktifkan rute utama berbayar...' });
+                        responseText = await nayaxaGemini.chatWithNayaxa(
+                            message, attachmentList, instansi_id, month, year, history, user_name, profil_id,
+                            blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet,
+                            userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal,
+                            true
+                        );
+                    }
                 } else {
-                    // Gemini failed!
+                    // Gemini Free failed! Fallback sequence: Groq Llama 3.3 -> DeepSeek -> Gemini Paid
+                    let fallbackSuccess = false;
+                    
+                    // 1. Try Groq Llama 3.3
                     const isGroqEnabled = process.env.GROQ_ENABLED === 'true';
-                    if (isGroqEnabled && !hasImages) {
-                        brainUsed = 'Groq Llama 3.3 (Fallback)';
-                        sendEvent('step', { icon: '🔄', label: 'Mempersiapkan otak cadangan Groq Llama 3.3...' });
+                    if (!fallbackSuccess && isGroqEnabled && !hasImages) {
                         try {
+                            brainUsed = 'Groq Llama 3.3 (Fallback)';
+                            sendEvent('step', { icon: '🔄', label: 'Gemini sibuk. Mencoba Groq Llama 3.3...' });
                             responseText = await nayaxaGroq.chatWithNayaxa(
                                 message, attachmentList, instansi_id, month, year, history, user_name, profil_id,
                                 blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet,
                                 userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal
                             );
+                            fallbackSuccess = true;
                         } catch (groqErr) {
-                            console.error('[Nayaxa_SSE_Error] Groq fallback failed, trying DeepSeek...', groqErr.message);
-                            if (isDeepSeekEnabled) {
-                                brainUsed = 'DeepSeek (Fallback)';
-                                sendEvent('step', { icon: '🔄', label: 'Sedang mencari rute alternatif...' });
-                                responseText = await nayaxaDeepSeek.chatWithNayaxa(
-                                    message, [], instansi_id, month, year, history, user_name, profil_id,
-                                    blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet,
-                                    userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal
-                                );
-                            } else {
-                                throw groqErr;
-                            }
+                            console.error('[Nayaxa_SSE_Error] Groq fallback failed...', groqErr.message);
                         }
-                    } else if (isDeepSeekEnabled && !hasImages) {
-                        brainUsed = 'DeepSeek (Fallback)';
-                        sendEvent('step', { icon: '🔄', label: 'Sedang mencari rute alternatif...' });
-                        responseText = await nayaxaDeepSeek.chatWithNayaxa(
-                            message, [], instansi_id, month, year, history, user_name, profil_id,
+                    }
+                    
+                    // 2. Try DeepSeek
+                    if (!fallbackSuccess && isDeepSeekEnabled && !hasImages) {
+                        try {
+                            brainUsed = 'DeepSeek (Fallback)';
+                            sendEvent('step', { icon: '🔄', label: 'Mencoba rute alternatif DeepSeek...' });
+                            responseText = await nayaxaDeepSeek.chatWithNayaxa(
+                                message, [], instansi_id, month, year, history, user_name, profil_id,
+                                blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet,
+                                userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal
+                            );
+                            fallbackSuccess = true;
+                        } catch (dsErr) {
+                            console.error('[Nayaxa_SSE_Error] DeepSeek fallback failed...', dsErr.message);
+                        }
+                    }
+                    
+                    // 3. Try Gemini Paid (Ultimate Fallback)
+                    if (!fallbackSuccess) {
+                        brainUsed = 'Gemini Paid (Fallback)';
+                        sendEvent('step', { icon: '🔄', label: 'Menggunakan rute cadangan utama Gemini...' });
+                        responseText = await nayaxaGemini.chatWithNayaxa(
+                            message, attachmentList, instansi_id, month, year, history, user_name, profil_id,
                             blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet,
-                            userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal
+                            userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal,
+                            true // forcePaidKey = true
                         );
-                    } else {
-                        throw err;
                     }
                 }
             }
