@@ -1,21 +1,14 @@
-const poolDashboard = require('../Backend/src/config/db');
-const poolNayaxa = require('./src/config/dbNayaxa');
+const dbNayaxa = require('../src/config/dbNayaxa');
 
-async function listAllTables() {
+async function listTables() {
     try {
-        const [dashTables] = await poolDashboard.query('SHOW TABLES');
-        const [nayaxaTables] = await poolNayaxa.query('SHOW TABLES');
-        
-        console.log('--- DASHBOARD TABLES ---');
-        console.log(dashTables);
-        console.log('\n--- NAYAXA TABLES ---');
-        console.log(nayaxaTables);
-        
-        process.exit(0);
-    } catch (err) {
-        console.error(err);
-        process.exit(1);
+        const [rows] = await dbNayaxa.query("SHOW TABLES");
+        console.log("Tables in nayaxa_db:");
+        console.table(rows);
+    } catch (error) {
+        console.error("Error:", error.message);
     }
+    process.exit();
 }
 
-listAllTables();
+listTables();

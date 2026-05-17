@@ -42,9 +42,9 @@ async function runDiagnosis() {
     console.log('\n3. Memeriksa Gemini (Otak Cadangan)...');
     try {
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+        const model = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-flash-latest' });
         const result = await model.generateContent('Hi');
-        console.log('   ✅ Gemini 2.5 Aktif & Merespon.');
+        console.log('   ✅ Gemini Aktif & Merespon.');
     } catch (err) {
         console.log('   ❌ Gemini Error: ' + err.message);
     }

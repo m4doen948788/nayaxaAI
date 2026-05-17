@@ -9,12 +9,42 @@ const nayaxaStandalone = require('./nayaxaStandalone');
 const exportService = require('./exportService');
 const knowledgeTool = require('./knowledgeTool');
 const codeAgent = require('./codeAgentService');
-const nayaxaMindService = require('./nayaxaMindService');
+const nayaxaPromptService = require('./nayaxaPromptService');
+const docxTableUpdater = require('./docxTableUpdater');
 
-/**
- * DeepSeek Service - Stable v4.5.3
- * Standard tool-calling service for Nayaxa Engine.
- */
+const _keyCache = { data: null, ts: 0, ttl: 120000 }; // 2 minutes cache
+
+const getApiKey = async (excludeKey = null) => {
+    try {
+        const now = Date.now();
+        // Check cache
+        if (!excludeKey && _keyCache.data && (now - _keyCache.ts < _keyCache.ttl)) {
+            return _keyCache.data[0].api_key;
+        }
+
+        let query = "SELECT api_key FROM gemini_api_keys WHERE is_active = 1 AND jenis_ai = 'DeepSeek Paid'";
+        let params = [];
+        if (excludeKey) {
+            query += ' AND api_key != ?';
+            params.push(excludeKey);
+        }
+        query += ' ORDER BY last_used ASC LIMIT 1';
+        
+        const [rows] = await dbNayaxa.query(query, params);
+        if (rows.length > 0) {
+            if (!excludeKey) {
+                _keyCache.data = rows;
+                _keyCache.ts = now;
+            }
+            const selectedKey = rows[0].api_key;
+            dbNayaxa.query('UPDATE gemini_api_keys SET last_used = NOW() WHERE api_key = ?', [selectedKey]).catch(() => {});
+            return selectedKey;
+        }
+    } catch (err) {
+        console.error('Error fetching DeepSeek API Key:', err);
+    }
+    return process.env.NAYAXA_DEEPSEEK_API_KEY;
+};
 
 const toolFunctions = {
     search_internet: async ({ query }) => {
@@ -73,6 +103,47 @@ const toolFunctions = {
             return { success: false, error: err.message };
         }
     },
+    export_discussion_to_word: async ({ topik_yang_dipilih, filename }, { baseUrl, session_id }) => {
+        try {
+            if (!session_id) return { success: false, error: "Session ID tidak ditemukan." };
+            
+            const [rows] = await dbNayaxa.query(
+                "SELECT content FROM nayaxa_chat_history WHERE session_id = ? AND role = 'assistant' AND brain_used IS NOT NULL ORDER BY created_at ASC",
+                [session_id]
+            );
+
+            if (rows.length === 0) {
+                return { success: false, error: "Tidak ada riwayat pembahasan dari AI dalam sesi ini." };
+            }
+
+            let filteredMessages = rows.map(r => r.content);
+
+            if (topik_yang_dipilih && topik_yang_dipilih.toUpperCase() !== 'ALL') {
+                const topicKeywords = topik_yang_dipilih.toLowerCase().split(' ').filter(k => k.length > 3);
+                if (topicKeywords.length > 0) {
+                    const matched = rows.map(r => r.content).filter(content => {
+                        const lower = content.toLowerCase();
+                        return topicKeywords.some(k => lower.includes(k));
+                    });
+                    if (matched.length > 0) {
+                        filteredMessages = matched;
+                    }
+                }
+            }
+
+            const fullContent = filteredMessages.join('\n\n');
+            const downloadPath = await exportService.generateWord(fullContent, filename || 'Rangkuman_Diskusi.docx');
+            const downloadUrl = downloadPath.startsWith('http') ? downloadPath : `${baseUrl}${downloadPath}`;
+
+            return { 
+                success: true, 
+                download_url: downloadUrl, 
+                message: `File Word rangkuman obrolan '${filename}' untuk topik '${topik_yang_dipilih}' berhasil dibuat secara otomatis dari riwayat. JANGAN tuliskan link download di jawaban Anda, karena sistem sudah menampilkannya melalui tombol.` 
+            };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    },
     pembangkit_paparan_pptx: async (data, { baseUrl }) => {
         try {
             const res = await pptxService.generatePresentation(data);
@@ -105,6 +176,7 @@ const toolFunctions = {
         return { search_results: results };
     },
     analyze_dashboard_document: async ({ file_id, query }, { app_id }) => {
+        const nayaxaMindService = require('./nayaxaMindService');
         const result = await nayaxaMindService.analyzeAndIngestDocument(file_id, app_id, query);
         return { analysis_result: result };
     },
@@ -124,6 +196,7 @@ const toolFunctions = {
         return await knowledgeTool.ingestToKnowledge(app_id, category, content, source_file);
     },
     save_document_insight: async ({ file_hash, sub_topic, insight_content, user_query }) => {
+        const nayaxaMindService = require('./nayaxaMindService');
         return await nayaxaMindService.saveDocumentInsight(file_hash, sub_topic, insight_content, user_query);
     },
     // --- CODING AGENT TOOLS (only active in coding_mode) ---
@@ -163,6 +236,31 @@ const toolFunctions = {
     execute_database_update: async ({ query }) => {
         const jsonResult = await nayaxaStandalone.executeSystemQuery(query);
         return { database_result: jsonResult };
+    },
+    scan_document_tables: async (args, { docxBase64, excelBase64 }) => {
+        try {
+            const base64 = docxBase64 || excelBase64;
+            if (!base64) return { success: false, error: 'Tidak ada dokumen DOCX yang ditemukan dalam konteks percakapan.' };
+            return await docxTableUpdater.getTableSummary(base64);
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    },
+    update_document_tables: async ({ updates_json, filename }, { docxBase64, excelBase64, baseUrl }) => {
+        try {
+            const base64 = docxBase64 || excelBase64;
+            if (!base64) return { success: false, error: 'Tidak ada dokumen DOCX yang ditemukan dalam konteks percakapan.' };
+            const result = await docxTableUpdater.updateDocumentTables(base64, updates_json, filename);
+            if (result.success) {
+                const fullUrl = result.download_path.startsWith('http') ? result.download_path : `${baseUrl}${result.download_path}`;
+                result.download_url = fullUrl;
+                result.download_path = undefined;
+                result.message = `${result.message} JANGAN tuliskan link download di jawaban Anda, karena sistem sudah menampilkannya secara otomatis melalui tombol.`;
+            }
+            return result;
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
     }
 };
 
@@ -270,6 +368,18 @@ const DEEPSEEK_TOOLS = [
         } 
     } },
     { type: "function", function: { 
+        name: "export_discussion_to_word", 
+        description: "Alat khusus untuk merangkum dan mencetak file Word (.docx) dari seluruh atau sebagian pembahasan yang telah berlalu dalam obrolan. JANGAN mengetik ulang kontennya. Sistem backend akan menyaring seluruh pesan secara otomatis.", 
+        parameters: { 
+            type: "object", 
+            properties: { 
+                topik_yang_dipilih: { type: "string", description: "Topik spesifik yang ingin dirangkum (misal: 'Metode Penelitian'). Jika user meminta merangkum semua obrolan, isi dengan 'ALL'." },
+                filename: { type: "string", description: "Nama file output (misal: 'Rangkuman_Diskusi.docx')" }
+            }, 
+            required: ["topik_yang_dipilih", "filename"] 
+        } 
+    } },
+    { type: "function", function: { 
         name: "pembangkit_paparan_pptx", 
         description: "Satu-satunya tool untuk membuat dokumen presentasi resmi (.pptx) dengan desain modern Bapperida 2026. Gunakan ini untuk slides/paparan.", 
         parameters: { 
@@ -347,6 +457,23 @@ const DEEPSEEK_TOOLS = [
             required: ["filled_data", "filename"] 
         } 
     } },
+    { type: "function", function: {
+        name: "scan_document_tables",
+        description: "Memindai dan membaca struktur semua tabel di dalam dokumen DOCX yang diunggah user. Gunakan tool ini PERTAMA KALI sebelum update_document_tables.",
+        parameters: { type: "object", properties: {}, required: [] }
+    }},
+    { type: "function", function: {
+        name: "update_document_tables",
+        description: "Memperbarui data di dalam tabel-tabel dokumen DOCX berdasarkan mapping yang telah dianalisis. WAJIB dipanggil setelah scan_document_tables.",
+        parameters: {
+            type: "object",
+            properties: {
+                updates_json: { type: "string", description: "JSON Array berisi daftar update. Format: [{\"table_id\": 1, \"row_label\": \"Nama Program\", \"column_header\": \"Realisasi\", \"new_value\": \"450000000\"}]" },
+                filename: { type: "string", description: "Nama file output DOCX" }
+            },
+            required: ["updates_json", "filename"]
+        }
+    }},
     { 
         type: "function", 
         function: { 
@@ -454,6 +581,8 @@ const TOOL_STEP_LABELS = {
     generate_chart:            { icon: '📈', label: 'Membuat grafik visualisasi...' },
     search_files_and_knowledge:{ icon: '🔍', label: 'Mencari di basis pengetahuan...' },
     fill_excel_template:       { icon: '📋', label: 'Mengisi template Excel...' },
+    scan_document_tables:      { icon: '🔬', label: 'Memindai struktur tabel dokumen...' },
+    update_document_tables:    { icon: '✏️', label: 'Memperbarui data tabel di dokumen...' },
     ingest_to_knowledge:       { icon: '🧠', label: 'Menyimpan ke basis pengetahuan...' },
     list_project_files:        { icon: '📁', label: 'Menjelajahi struktur proyek...' },
     read_code_file:            { icon: '📄', label: 'Membaca isi file kode...' },
@@ -513,90 +642,12 @@ const isSummaryRequest = (query) => {
     return /rangkum|ringkas|summary|summarize|analisis komprehensif|master summary|kesimpulan|inti dari|poin-poin|seluruh isi/i.test(query);
 };
 
-// Simple non-streaming DeepSeek Flash call for background summarization
-const callDeepSeekNonStream = async (prompt, apiKey) => {
-    try {
-        const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-            model: "deepseek-v4-flash",
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0.1,
-            max_tokens: 4000
-        }, {
-            headers: { 'Authorization': `Bearer ${apiKey}` },
-            timeout: 90000
-        });
-        return response.data?.choices[0]?.message?.content || "";
-    } catch (e) {
-        console.error('[DeepSeek_Background_Summary_Error]:', e.message);
-        return "";
-    }
+const isBudgetQuery = (query) => {
+    return /anggaran|rka|dpa|belanja|biaya|dana|pagu|ssh|sbu|rup|keuangan|proyek/i.test(query);
 };
 
-// Asynchronous Map-Reduce Master Summarizer (Using Rotating Gemini Free Tier for Rp 0 Cost)
-const generateMasterSummaryInBackground = async (fileHash, fileName, extractedText, apiKey) => {
-    try {
-        if (!extractedText || extractedText.length <= 50000) {
-            console.log(`[Worker] Skip background Master Summary for ${fileName} (Length: ${extractedText?.length || 0} chars <= 50,000 threshold).`);
-            return;
-        }
-        console.log(`[Worker] Starting background Master Summary for ${fileName} (${fileHash}) using rotating Gemini Free Key...`);
-        
-        // Dapatkan kunci Gemini gratis teraktif
-        let geminiApiKey = null;
-        try {
-            const [rows] = await dbNayaxa.query('SELECT api_key FROM gemini_api_keys WHERE is_active = 1 ORDER BY last_used ASC LIMIT 1');
-            if (rows.length > 0) {
-                geminiApiKey = rows[0].api_key;
-                // Update last_used
-                dbNayaxa.query('UPDATE gemini_api_keys SET last_used = NOW() WHERE api_key = ?', [geminiApiKey]).catch(() => {});
-            }
-        } catch (e) {
-            console.error('[Worker] Error getting Gemini Free Key, falling back to process.env:', e.message);
-        }
-        if (!geminiApiKey) {
-            geminiApiKey = process.env.GEMINI_API_KEY;
-        }
 
-        const callGeminiNonStream = async (prompt) => {
-            try {
-                const { GoogleGenerativeAI } = require('@google/generative-ai');
-                const genAI = new GoogleGenerativeAI(geminiApiKey);
-                const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-                const result = await model.generateContent(prompt);
-                return result.response.text()?.trim() || "";
-            } catch (e) {
-                console.error('[Worker_Gemini_Error]:', e.message);
-                return "";
-            }
-        };
-
-        // 1. Chunk document into sections of ~30,000 characters (Map Phase)
-        const sections = chunkDocument(extractedText, 30000, 2000);
-        const sectionSummaries = [];
-        
-        for (let i = 0; i < Math.min(sections.length, 10); i++) { // Max 10 sections to be safe
-            const sectionPrompt = `Sebagai asisten AI Nayaxa, buat ringkasan eksekutif sangat detail (mencakup fakta penting, angka statistik, rekomendasi, dan aturan penting) dari Bagian ${i + 1}/${sections.length} dari dokumen "${fileName}" berikut:\n\n${sections[i]}`;
-            const summary = await callGeminiNonStream(sectionPrompt);
-            if (summary) sectionSummaries.push(summary);
-        }
-        
-        // 2. Combine and reduce (Reduce Phase)
-        if (sectionSummaries.length > 0) {
-            const reducePrompt = `Sebagai asisten AI Nayaxa, gabungkan ringkasan-ringkasan bagian dokumen "${fileName}" berikut menjadi satu Ringkasan Induk (Master Summary) yang sangat komprehensif, premium, terstruktur (Gunakan sub-bab, poin penting, tabel jika relevan), dan siap saji bagi pimpinan/executive:\n\n${sectionSummaries.join('\n\n--- SEKSI BARU ---\n\n')}`;
-            const finalMasterSummary = await callGeminiNonStream(reducePrompt);
-            
-            if (finalMasterSummary) {
-                await dbNayaxa.query(
-                    'UPDATE nayaxa_file_cache SET master_summary = ? WHERE file_hash = ?',
-                    [finalMasterSummary, fileHash]
-                );
-                console.log(`[Worker] Successfully generated & saved Master Summary for ${fileName} using Gemini Free!`);
-            }
-        }
-    } catch (err) {
-        console.error(`[Worker] Error in generateMasterSummaryInBackground for ${fileName}:`, err.message);
-    }
-};
+// Background Master Summary and AI tasks are now orchestrated by nayaxaRoutingService.
 
 // --- DYNAMIC COLLABORATIVE MEMORY & SATURATION HELPERS ---
 const retrieveHybridContext = async (fileHash, query, onStepCallback = null) => {
@@ -609,6 +660,20 @@ const retrieveHybridContext = async (fileHash, query, onStepCallback = null) => 
             "SELECT config_value FROM nayaxa_global_configs WHERE config_key = 'ENABLE_COLLABORATIVE_MEMORY' LIMIT 1"
         );
         const isMemEnabled = configRows.length > 0 ? configRows[0].config_value === '1' : true;
+        const isBudget = isBudgetQuery(query);
+
+        // 0. Include Master Summary for Budget Context (v4.8.5)
+        if (isBudget) {
+            const [cacheRows] = await dbNayaxa.query(
+                "SELECT master_summary FROM nayaxa_file_cache WHERE file_hash = ? LIMIT 1",
+                [fileHash]
+            );
+            if (cacheRows.length > 0 && cacheRows[0].master_summary) {
+                context += `\n=== RINGKASAN INDUK (KONTEKS TOTAL ANGGARAN) ===\n${cacheRows[0].master_summary}\n`;
+                if (onStepCallback) onStepCallback({ icon: '📊', label: 'Menyertakan ringkasan total anggaran sebagai rujukan...' });
+            }
+        }
+
 
         let insights = [];
         if (isMemEnabled) {
@@ -677,11 +742,12 @@ const retrieveHybridContext = async (fileHash, query, onStepCallback = null) => 
                     index: idx
                 }));
 
-                // Urutkan berdasarkan skor tertinggi dan ambil maksimal 8 chunk paling relevan
+                // Urutkan berdasarkan skor tertinggi dan ambil maksimal chunks paling relevan (Lebih banyak untuk Budget)
+                const depth = isBudget ? 25 : 8;
                 const topChunks = scoredChunks
                     .filter(c => c.score > 0)
                     .sort((a, b) => b.score - a.score)
-                    .slice(0, 8);
+                    .slice(0, depth);
 
                 // Jika tidak ada kata kunci yang cocok sama sekali, ambil 4 chunks pertama sebagai default fallback
                 const selectedChunks = topChunks.length > 0 ? topChunks : scoredChunks.slice(0, 4);
@@ -884,6 +950,8 @@ const nayaxaDeepSeekService = {
             - Fokuslah pada interaksi yang manusiawi, ramah, dan profesional.
             ${personaPromptSnippet}
             ${lastActivityContext ? `\nKONTEKS AKTIVITAS TERAKHIR USER: "${lastActivityContext}"\nSapa user dengan hangat dan hubungkan kalimat pembuka/pertanyaan Anda dengan aktivitas tersebut secara proaktif (Predictive Greeting).\n` : ''}
+            WAKTU AKTIF: ${fullDate}. Selalu gunakan nilai ini sebagai filter waktu default dan referensi sapaan waktu (Pagi/Siang/Sore/Malam).
+
             PENTING - ADAPTASI FORMALITAS: Sesuaikan tingkat formalitas Anda dengan Profil Kepribadian User di atas. Jika user terbiasa santai (Gue/Lo, Gw/Lu, Ane/Ente), Anda diperbolehkan menggunakan gaya bicara yang serupa (casual-professional) namun tetap sopan, ceria, dan membantu. Jangan gunakan emoji. Jika user formal, tetaplah sangat formal (Saya/Anda).
             
             ATURAN GRAFIK: Jika user meminta grafik/chart, Anda WAJIB menggunakan tool 'generate_chart'. JANGAN PERNAH memberikan kode Python atau CSV mentah. Gunakan tool tersebut untuk membuat visualisasi interaktif.
@@ -900,7 +968,8 @@ const nayaxaDeepSeekService = {
             - DILARANG KERAS bertanya "apakah Anda ingin linknya?" atau sejenisnya. Langsung berikan referensi tersebut secara otomatis dan instan di dalam footer.
             
             CATATAN DOKUMEN & FILE: 
-            - Jika user meminta laporan baru, gunakan tool 'generate_document'. 
+            - **FILE UNGGULAN CHAT (PENTING)**: Jika pesan pengguna diawali dengan format \`[FILE: nama_file -> ACTION: tindakan]\` (seperti \`[FILE: PM-3201-13-6-inovasi-pmba-1776053180.pdf -> ACTION: Analisis]\`), ini adalah file yang BARU saja diunggah di dalam chat obrolan ini. Teks dari file ini SUDAH diekstrak dan disertakan dalam konteks pesan (\`[DOKUMEN DIUNGGAH DI CHAT]\` atau riwayat dokumen). Anda **DILARANG KERAS** menggunakan tool 'analyze_dashboard_document' atau 'search_files_and_knowledge' untuk mencari file ini di database/dashboard. Cukup baca isi teks yang sudah diberikan dan langsung jawab secara instan!
+            - Jika user meminta laporan baru, gunakan tool 'generate_document'.
              !!! PROTOKOL URUTAN EKSEKUSI TOOL & STRUKTUR RESPONS (MUTLAK) !!!
              - **TAHAP 1: EKSEKUSI ALAT (SILENT FIRST TURN)**: Jika Anda memutuskan untuk memanggil alat/tool apa pun (seperti 'search_files_and_knowledge' atau 'execute_sql_query'), Anda **DILARANG KERAS** menulis teks biasa, sapaan pembuka, janji pencarian, atau kalimat "Mohon tunggu" (seperti "Saya akan mencari...", "Tunggu sebentar...") di obrolan utama pada giliran pertama. Anda **WAJIB langsung melakukan pemanggilan tool secara instan** tanpa karakter teks biasa. Narasi pencarian atau rencana Anda hanya boleh ditulis secara internal di dalam tag <thought>...</thought>.
              - **TAHAP 2: PENYAJIAN RESPONS ANALITIS (SETELAH TOOL SELESAI)**: Narasi pembuka yang ramah, pengantar konteks, tabel data utama, analisis wawasan mendalam (insights), dan kesimpulan **HANYA BOLEH Anda susun setelah seluruh tool selesai dieksekusi** dan Anda telah memegang data riilnya.
@@ -918,9 +987,15 @@ const nayaxaDeepSeekService = {
             - Gunakan key lain yang sesuai dengan Nama Header Kolom (misal: "hasil verifikasi", "rekomendasi", "keterangan") untuk mengisi nilainya.
             - Contoh: [{"uraian": "Lokasi", "rekomendasi": "Masukkan alamat lengkap"}] akan mencari baris yang mengandung kata 'Lokasi' dan mengisi kolom 'REKOMENDASI' di baris tersebut.
             
+            UPDATE DOCX TABLES: Jika user mengunggah file DOCX dan meminta Anda untuk "memperbarui tabel", "mengganti isian tabel", atau "memasukkan data ke tabel dokumen", ikuti 2 langkah wajib ini:
+            1. Panggil tool 'scan_document_tables' terlebih dahulu untuk memindai ID tabel, nama kolom, dan label baris yang ada di dokumen.
+            2. Setelah menerima hasil scan, panggil tool 'update_document_tables' dengan menyertakan JSON updates_json yang berisi pemetaan data baru ke tabel/baris/kolom yang tepat.
+            
+            
             PENTING - FORMAT JAWABAN & ANALISIS MENDALAM:
+            - **ATURAN SPASI BOLD (PENTING)**: Anda WAJIB memberikan spasi yang jelas sebelum dan sesudah kata yang ditebalkan (bold). Contoh yang BENAR: "Gubernur **Andra Soni** dilantik", Contoh yang SALAH: "Gubernur**Andra Soni**dilantik". Ini demi kerapian konversi dokumen.
             - **DILARANG TERLALU TO-THE-POINT / SINGKAT**: Jangan pernah menyajikan tabel data atau hasil kueri mentah begitu saja tanpa penjelasan. Anda adalah seorang Asisten Analis Senior Bapperida yang cerdas, sehingga Anda **WAJIB** memberikan narasi penjelasan yang kaya, interpretasi makna data, identifikasi tren, anomali, serta implikasi praktisnya terhadap instansi di setiap respon Anda.
-${nayaxaMindService.getNayaxaProtokolPrompt()}
+${nayaxaPromptService.getNayaxaProtokolPrompt()}
             - **STRUKTUR RESPONS ANALITIS PREMIUM**:
                 1. **Konteks & Pengantar**: Berikan pengantar ramah yang menjelaskan relevansi data yang sedang disajikan.
                 2. **Data Utama**: Sajikan data pokok secara rapi menggunakan Tabel Markdown, Grafik (melalui tool generate_chart jika relevan), atau List bertingkat yang indah.
@@ -988,6 +1063,10 @@ ${nayaxaMindService.getNayaxaProtokolPrompt()}
             - Gunakan key "uraian" atau "label" untuk mencocokkan baris yang ingin diisi. 
             - Gunakan key lain yang sesuai dengan Nama Header Kolom (misal: "hasil verifikasi", "rekomendasi", "keterangan") untuk mengisi nilainya.
             - Contoh: [{"uraian": "Lokasi", "rekomendasi": "Masukkan alamat lengkap"}] akan mencari baris yang mengandung kata 'Lokasi' dan mengisi kolom 'REKOMENDASI' di baris tersebut.
+            
+            UPDATE DOCX TABLES: Jika user mengunggah file DOCX dan meminta Anda untuk "memperbarui tabel", "mengganti isian tabel", atau "memasukkan data ke tabel dokumen", ikuti 2 langkah wajib ini:
+            1. Panggil tool 'scan_document_tables' terlebih dahulu untuk memindai ID tabel, nama kolom, dan label baris yang ada di dokumen.
+            2. Setelah menerima hasil scan, panggil tool 'update_document_tables' dengan menyertakan JSON updates_json yang berisi pemetaan data baru ke tabel/baris/kolom yang tepat.
             BERIKAN LINK DOWNLOAD HASILNYA kepada user.`;
 
         let projectStructureInfo = '';
@@ -1011,6 +1090,7 @@ WORKFLOW:
 3. Lakukan perubahan dengan 'propose_code_changes' atau 'write_code_file'.
 4. Akhiri jawaban HANYA dengan ringkasan 1 kalimat perubahan dan marker [NAYAXA_PROPOSAL:id].`;
 
+        const nayaxaMindService = require('./nayaxaMindService');
         const generalPersonaPrompt = nayaxaMindService.getNayaxaGeneralPersonaPrompt(userProfile, user_name, lastActivityContext); /*
 Gaya Bahasa: Sangat ceria, antusias, hangat, penuh semangat, profesional, dan empatik. Di akhir setiap penjelasan, SELALU tawarkan bantuan ekstra atau berikan satu pertanyaan pendek.
 PENTING: DILARANG KERAS MENGGUNAKAN EMOJI APAPUN.
@@ -1027,6 +1107,7 @@ PENTING - ADAPTASI FORMALITAS: Sesuaikan tingkat formalitas Anda dengan Profil K
             ${generalPersonaPrompt}
             
             WAKTU SEKARANG: ${fullDate || `Bulan ${month}, Tahun ${year}`}.
+            REFERENSI SAPAAN: Gunakan jam di atas untuk menentukan sapaan (Pagi/Siang/Sore/Malam).
             BULAN AKTIF: ${month}, TAHUN AKTIF: ${year}. Gunakan nilai ini secara otomatis untuk semua query berbasis waktu.
             
             ${userProfile ? `
@@ -1084,11 +1165,24 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                         let isCacheHit = false;
 
                         if (cachedRows.length > 0) {
-                            extractedText = cachedRows[0].extracted_text;
+                            extractedText = cachedRows[0].extracted_text || '';
                             cachedSummary = cachedRows[0].master_summary;
                             isCacheHit = true;
                             console.log(`[DeepSeek] Cache HIT for "${fileName}" (${fileHash})!`);
                             if (onStepCallback) onStepCallback({ icon: '⚡', label: `Dokumen terdeteksi! Memuat instan dari cache lokal...` });
+
+                            const isPDF = mimeType?.includes('pdf') || extension === 'pdf';
+                            if (isPDF && extractedText.trim().length < 300) {
+                                console.warn(`[DeepSeek] Cache HIT PDF '${fileName}' memiliki teks sangat pendek (${extractedText.trim().length} karakter). Memberikan notifikasi ke AI.`);
+                                if (onStepCallback) onStepCallback({ icon: '⚠️', label: `PDF berbasis gambar terdeteksi — tidak dapat diekstrak teksnya.` });
+                                fileContext = (fileContext ? fileContext + '\n\n' : '') +
+                                    `[PERINGATAN SISTEM: File "${fileName}" adalah PDF berbasis gambar/scan. ` +
+                                    `Sistem tidak dapat mengekstrak teks dari file ini secara otomatis. ` +
+                                    `Informasikan kepada pengguna bahwa dokumen ini kemungkinan berupa scan/foto ` +
+                                    `dan sarankan mereka untuk menggunakan model Gemini yang mendukung penglihatan (vision) ` +
+                                    `agar dapat membaca isi dokumen scan tersebut.]`;
+                                continue;
+                            }
                         } else {
                             // Cache MISS: Parse physical file
                             console.log(`[DeepSeek] Cache MISS for "${fileName}". Parsing file physically...`);
@@ -1117,8 +1211,8 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                                 extractedText = pdfData.text?.trim() || '';
                             }
 
-                            if (!extractedText || extractedText.trim().length === 0) {
-                                throw new Error('Dokumen kosong atau tidak dapat diekstrak teksnya.');
+                            if (!extractedText || extractedText.trim().length < 300) {
+                                throw new Error('Dokumen kosong atau teks tidak memadai (kurang dari 300 karakter).');
                             }
 
                             // Save to Cache Table
@@ -1128,7 +1222,6 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                             );
 
                             // Slice into Chunks & Save to Chunks Table
-                            if (onStepCallback) onStepCallback({ icon: '✂️', label: `Memotong dokumen menjadi paragraf kecil...` });
                             const chunks = chunkDocument(extractedText, 1200, 250); // 1200 chars chunk, 250 overlap
                             for (let j = 0; j < chunks.length; j++) {
                                 await dbNayaxa.query(
@@ -1231,6 +1324,7 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
             // --- STREAMING-ENABLED API CALL ---
             const callDeepSeekStream = async (msgs, isToolLoop = false) => {
                 console.log(`[DeepSeek] Requesting model: ${targetModel} (Loop: ${isToolLoop ? 'Yes' : 'No'})`);
+                const apiKey = await getApiKey();
                 const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
                     model: targetModel, 
                     messages: msgs,
@@ -1395,6 +1489,8 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                                 if (fn === 'generate_document') {
                                     const ext = (args.format || 'DOC').toUpperCase();
                                     onStepCallback({ icon: '📝', label: `Sedang membuat file (${ext})...` });
+                                } else if (fn === 'export_discussion_to_word') {
+                                    onStepCallback({ icon: '📑', label: `Merangkum riwayat obrolan ke Word...` });
                                 } else if (fn === 'pembangkit_paparan_pptx') {
                                     onStepCallback({ icon: '📊', label: 'Sedang membuat file (PPTX)...' });
                                 } else if (TOOL_STEP_LABELS[fn]) {
@@ -1406,7 +1502,9 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                             
                             const excelFile = attachmentList.find(f => f.mimeType?.includes('spreadsheetml') || f.mimeType?.includes('excel') || f.mimeType?.includes('officedocument.spreadsheetml.sheet'));
                             const excelBase64 = excelFile ? excelFile.base64 : null;
-                            res = await toolFunctions[fn]({ ...args, instansi_id, month, year }, { excelBase64, baseUrl, session_id, signal });
+                            const docxFile = attachmentList.find(f => f.mimeType?.includes('wordprocessingml') || f.mimeType?.includes('msword') || f.name?.toLowerCase().endsWith('.docx') || f.name?.toLowerCase().endsWith('.doc'));
+                            const docxBase64 = docxFile ? docxFile.base64 : null;
+                            res = await toolFunctions[fn]({ ...args, instansi_id, month, year }, { excelBase64, docxBase64, baseUrl, session_id, signal, onStepCallback, app_id: 1 });
                             
                             if (res.success && res.download_url) {
                                 const actualFileName = res.download_url.split('/').pop();
@@ -1502,9 +1600,49 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                 throw error;
             }
 
+            // Debug log to database
+            try {
+                const dbNayaxa = require('../config/dbNayaxa');
+                await dbNayaxa.query(
+                    'INSERT INTO nayaxa_mind_logs (task_name, status, message, started_at, finished_at) VALUES (?, ?, ?, NOW(), NOW())',
+                    ['DeepSeek Error Debug', 'FAILED', `Error: ${error.message}`]
+                );
+            } catch (logErr) {}
+
             return `Maaf, terjadi gangguan saat Nayaxa memproses data: ${error.message}`;
         }
     }
 };
 
+/**
+ * Trigger Map-Reduce Master Summary in Background
+ */
+async function generateMasterSummaryInBackground(fileHash, fileName, extractedText, apiKey) {
+    try {
+        console.log(`[DeepSeek:Background] Starting Master Summary for ${fileName}...`);
+        const nayaxaRoutingService = require('./nayaxaRoutingService');
+        
+        // Split text into sections of 15k chars for Map-Reduce
+        const sections = [];
+        for (let i = 0; i < extractedText.length; i += 15000) {
+            sections.push(extractedText.substring(i, i + 15000));
+            if (sections.length >= 10) break; // Limit to 10 sections (150k chars) to prevent huge costs
+        }
+
+        const masterSummary = await nayaxaRoutingService.routeMasterSummary(fileName, sections);
+        
+        if (masterSummary) {
+            const dbNayaxa = require('../config/dbNayaxa');
+            await dbNayaxa.query(
+                'UPDATE nayaxa_file_cache SET master_summary = ? WHERE file_hash = ?',
+                [masterSummary, fileHash]
+            );
+            console.log(`[DeepSeek:Background] Master Summary complete for ${fileName}.`);
+        }
+    } catch (err) {
+        console.error(`[DeepSeek:Background] Master Summary Error for ${fileName}:`, err.message);
+    }
+}
+
 module.exports = nayaxaDeepSeekService;
+

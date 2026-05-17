@@ -1,6 +1,5 @@
 const dbDashboard = require('../config/dbDashboard');
 const dbNayaxa = require('../config/dbNayaxa');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const mammoth = require('mammoth');
 const XLSX = require('xlsx');
 const pdf = require('pdf-parse');
@@ -8,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const knowledgeTool = require('./knowledgeTool');
 const nayaxaStandalone = require('./nayaxaStandalone');
+const axios = require('axios');
 
 const isLocal = process.platform === 'win32';
 const DASHBOARD_UPLOADS = isLocal 
@@ -15,48 +15,19 @@ const DASHBOARD_UPLOADS = isLocal
     : path.join(__dirname, '../../../../dashboard-ppm/Backend/uploads');
 
 /**
- * Get the primary Gemini API key from DB
+ * Hybrid PDF Processor: Gemini as the Eyes, DeepSeek as the Brain (Orchestrated by Routing)
  */
-const getApiKey = async () => {
-    try {
-        const [rows] = await dbNayaxa.query('SELECT api_key FROM gemini_api_keys WHERE is_active = 1 LIMIT 1');
-        if (rows.length > 0) return rows[0].api_key;
-    } catch (err) {
-        console.error('[Mind] Error fetching API Key:', err);
-    }
-    return process.env.GEMINI_API_KEY;
+const processHybridPdf = async (absolutePath, query = null) => {
+    const nayaxaRoutingService = require('./nayaxaRoutingService');
+    return await nayaxaRoutingService.routeAnalysis(absolutePath, query);
 };
 
 /**
- * Get DeepSeek API Key
+ * Hybrid PDF Processor: Gemini as the Eyes, DeepSeek as the Brain (v4.7.0)
  */
-const getDeepSeekKey = () => process.env.NAYAXA_DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY;
-
-const axios = require('axios');
-
-const analyzeWithDeepSeek = async (text) => {
-    try {
-        const apiKey = getDeepSeekKey();
-        const targetModel = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
-        console.log(`[Mind] Analyzing document with model: ${targetModel}`);
-        const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-            model: targetModel,
-            messages: [
-                { role: "system", content: "Anda adalah analis dokumen Nayaxa. Tugas Anda adalah meringkas isi dokumen secara mendalam (inti sari) untuk memori pengetahuan jangka panjang. Fokus pada fakta, angka, dan aturan penting. Gunakan bahasa Indonesia yang formal dan profesional." },
-                { role: "user", content: `Ringkas isi dokumen berikut untuk memori Nayaxa Intelligence: \n\n${text.substring(0, 30000)}` }
-            ],
-            temperature: 0.1
-        }, {
-            headers: { 'Authorization': `Bearer ${apiKey}` }
-        });
-        if (response.data.model) {
-            console.log(`[Mind] Server actually used model: ${response.data.model}`);
-        }
-        return response.data.choices[0].message.content;
-    } catch (error) {
-        console.error('[Mind] DeepSeek Analysis Error:', error.message);
-        return null;
-    }
+const processHybridPdf_OLD = async (absolutePath, modelGemini, query = null) => {
+    const nayaxaRoutingService = require('./nayaxaRoutingService');
+    return await nayaxaRoutingService.routeAnalysis(absolutePath, query);
 };
 
 // --- HELPER CHUNKING & RELEVANCE SCORING (TF-IDF Hybrid style) ---
@@ -213,64 +184,8 @@ const saveDocumentInsight = async (fileHash, subTopic, newInsight, userQuery) =>
             console.log(`[CollaborativeMemory] Document length: ${charLength} chars. Proceeding with saving/merging...`);
         }
 
-        console.log(`[CollaborativeMemory] Attempting to save/append insight for ${subTopic} (${fileHash})...`);
-        const apiKey = getDeepSeekKey();
-        
-        const [existing] = await dbNayaxa.query(
-            'SELECT id, summary, raw_logs, maturity_score FROM nayaxa_file_insights WHERE file_hash = ? AND sub_topic = ?',
-            [fileHash, subTopic]
-        );
-
-        let oldSummary = null;
-        let logs = [];
-        let rowId = null;
-
-        if (existing.length > 0) {
-            const row = existing[0];
-            oldSummary = row.summary;
-            rowId = row.id;
-            try { logs = JSON.parse(row.raw_logs); } catch (e) { logs = []; }
-        }
-
-        logs.push({ query: userQuery, answer: newInsight, timestamp: new Date().toISOString() });
-
-        const mergePrompt = `
-Sebagai asisten AI Nayaxa, tugas Anda adalah menganalisis, menstrukturkan, dan menilai tingkat kelengkapan ulasan tentang Sub-Topik "${subTopic}".
-
-${oldSummary ? `=== CATATAN ANALISIS LAMA ===\n${oldSummary}\n` : ''}
-
-=== ANALISIS BARU YANG INGIN DIASIMILASI ===
-${newInsight}
-
-=== ATURAN INTEGRASI NIR-LOSS (MANDATORY) ===
-1. ANDA DILARANG KERAS menghapus, menyederhanakan, atau membuang fakta penting apa pun (seperti nominal angka, persentase, referensi pasal/ayat, batas hari/tanggal, nama dinas, atau nama jabatan) dari analisis lama maupun baru.
-2. Gabungkan isi ulasan ini ke dalam sub-bab terstruktur yang kohesif (jika ada catatan analisis lama).
-3. Gunakan gaya formal, premium, dan detail. Jangan gunakan sapaan pembuka atau penutup (langsung sajikan format yang ditentukan).
-4. Berikan penilaian tingkat kematangan/kelengkapan (Confidence/Maturity Level) dari analisis gabungan ini dalam skala 0 sampai 100.
-   - Nilai 0-50: Analisis bersifat sangat singkat, parsial, atau masih banyak detail penting dokumen yang belum terungkap.
-   - Nilai 51-89: Analisis sudah cukup lengkap dan memiliki data penunjang, namun masih ada potensi ulasan penjelas/fakta tambahan yang bisa dimasukkan.
-   - Nilai 90-100: Analisis sudah sangat komprehensif, tuntas, kaya akan data nominal penting, berfakta kokoh, dan tidak membutuhkan ulasan tambahan lagi untuk sub-topik ini.
-
-=== FORMAT OUTPUT (WAJIB) ===
-Anda harus memberikan output dengan format persis seperti di bawah ini, tanpa basa-basi pembuka atau penutup:
-
-=== SCORE ===
-[Angka skala 0-100]
-
-=== CONSOLIDATED SUMMARY ===
-[Isi ulasan hasil integrasi terstruktur secara lengkap dan rapi]
-`;
-
-        const targetModel = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
-        const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-            model: targetModel,
-            messages: [{ role: "user", content: mergePrompt }],
-            temperature: 0.1
-        }, {
-            headers: { 'Authorization': `Bearer ${apiKey}` }
-        });
-
-        const consolidatedSummary = response.data?.choices?.[0]?.message?.content;
+        const nayaxaRoutingService = require('./nayaxaRoutingService');
+        const consolidatedSummary = await nayaxaRoutingService.routeConsolidation(subTopic, oldSummary, newInsight);
         if (!consolidatedSummary) {
             return { success: false, error: 'Empty AI Response' };
         }
@@ -331,7 +246,7 @@ const nayaxaMindService = {
 
             const apiKey = await getApiKey();
             const genAI = new GoogleGenerativeAI(apiKey);
-            const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+            const model = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-2.5-flash' });
 
             for (const file of newFiles) {
                 console.log(`[Mind] Learning document: ${file.nama_file}`);
@@ -471,25 +386,14 @@ const nayaxaMindService = {
                 nayaxaStandalone.detectAnomalies(2)
             ]);
 
-            const apiKey = await getApiKey();
-            const genAI = new GoogleGenerativeAI(apiKey);
-            const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
+            const nayaxaRoutingService = require('./nayaxaRoutingService');
             // Analyze System-Wide
-            const sysPrompt = `Analisis data statistik SELURUH SISTEM OPD/Instansi (Bulan ${month} Tahun ${year}). 
-            Data ini mencakup total keseluruhan pegawai di database. 
-            Berikan narasi ringkas tentang tren keaktifan total, anomali sistemik, dan wawasan global. 
-            Data: ${JSON.stringify({ stats: sysStats, forecast: sysForecast, alerts: sysAlerts })}`;
-            const sysResult = await model.generateContent(sysPrompt);
-            const sysInsight = sysResult.response.text();
+            const sysPrompt = `Analisis data statistik SELURUH SISTEM (Bulan ${month} Tahun ${year}). Data: ${JSON.stringify({ stats: sysStats, forecast: sysForecast, alerts: sysAlerts })}`;
+            const sysInsight = await nayaxaRoutingService.routeSimpleTask(sysPrompt);
 
             // Analyze Bapperida Specific
-            const bapPrompt = `Analisis data statistik khusus instansi BAPPERIDA (Bulan ${month} Tahun ${year}). 
-            Data ini HANYA mencakup pegawai yang terdaftar di Bapperida. 
-            Berikan narasi ringkas tentang keaktifan internal Bapperida, ranking bidang, dan anomali internal. 
-            Data: ${JSON.stringify({ stats: bapStats, forecast: bapForecast, alerts: bapAlerts })}`;
-            const bapResult = await model.generateContent(bapPrompt);
-            const bapInsight = bapResult.response.text();
+            const bapPrompt = `Analisis data statistik BAPPERIDA (Bulan ${month} Tahun ${year}). Data: ${JSON.stringify({ stats: bapStats, forecast: bapForecast, alerts: bapAlerts })}`;
+            const bapInsight = await nayaxaRoutingService.routeSimpleTask(bapPrompt);
 
             // Save to Knowledge Base with clear categorization
             await Promise.all([
@@ -534,8 +438,10 @@ const nayaxaMindService = {
      * Helper: Learn a specific document from the dashboard
      * This is used for on-demand ingestion to save tokens.
      */
-    analyzeAndIngestDocument: async (fileId, appId = 1, query = null) => {
+    analyzeAndIngestDocument: async (fileId, appId = 1, query = null, onStepCallback = null) => {
         try {
+            if (onStepCallback) onStepCallback({ icon: '🔍', label: 'Memulai analisis dokumen mendalam...' });
+
             const [files] = await dbDashboard.query(
                 'SELECT id, nama_file, path FROM dokumen_upload WHERE id = ? AND is_deleted = 0',
                 [fileId]
@@ -579,135 +485,69 @@ const nayaxaMindService = {
                 };
             }
 
-            // 2. Fallback to cached master summary if available
+            // 2. Fallback to cached text/master summary if available
             const [cacheRows] = await dbNayaxa.query(
-                "SELECT master_summary FROM nayaxa_file_cache WHERE file_hash = ? LIMIT 1",
+                "SELECT extracted_text, master_summary FROM nayaxa_file_cache WHERE file_hash = ? LIMIT 1",
                 [fileHash]
             );
 
-            if (cacheRows.length > 0 && cacheRows[0].master_summary) {
-                console.log(`[Mind:FastTrack] HIT master summary cache for "${file.nama_file}".`);
+            if (cacheRows.length > 0) {
+                console.log(`[Mind:FastTrack] HIT extracted_text cache for "${file.nama_file}".`);
                 if (query && !isSummaryRequest(query)) {
-                    console.log(`[Mind:RAG] Master summary found, but specific query requested. Using RAG.`);
+                    console.log(`[Mind:RAG] Cache text found, specific query requested. Using RAG.`);
                     const hybridContext = await retrieveHybridContext(fileHash, query);
                     return { success: true, content: hybridContext, source: file.nama_file, is_cached: true };
                 }
+                
+                // If summary requested
+                const summaryToReturn = cacheRows[0].master_summary || (cacheRows[0].extracted_text ? cacheRows[0].extracted_text.substring(0, 15000) : "Dokumen telah diindeks.");
                 return {
                     success: true,
-                    content: cacheRows[0].master_summary,
+                    content: summaryToReturn,
                     source: file.nama_file,
                     is_cached: true
                 };
             }
             // --- END COGNITIVE GATE ---
 
-            const apiKey = await getApiKey();
-            const genAI = new GoogleGenerativeAI(apiKey);
-            const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
-            let textContent = "";
-            let summaryContent = "";
+            // --- UNIFIED ROUTING PROTOCOL (v4.9.0) ---
+            // Route all document analyses through the central central AI brain router (routeChat)
+            // to ensure identical analysis routes, text extraction, fallbacks, and intelligence level.
+            const nayaxaRoutingService = require('./nayaxaRoutingService');
+            
+            const stats = fs.statSync(absolutePath);
             const ext = path.extname(file.nama_file).toLowerCase();
+            let mimeType = 'application/octet-stream';
+            if (ext === '.pdf') mimeType = 'application/pdf';
+            else if (ext === '.docx') mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+            else if (ext === '.doc') mimeType = 'application/msword';
+            else if (ext === '.xlsx') mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+            else if (ext === '.xls') mimeType = 'application/vnd.ms-excel';
+            else if (ext === '.csv') mimeType = 'text/csv';
+            else if (ext === '.png') mimeType = 'image/png';
+            else if (ext === '.jpg' || ext === '.jpeg') mimeType = 'image/jpeg';
+            else if (ext === '.txt') mimeType = 'text/plain';
 
-            // STEP 1: Extract Text or Use Multimodal
-            if (ext === '.docx' || ext === '.doc') {
-                const buffer = fs.readFileSync(absolutePath);
-                const result = await mammoth.convertToHtml({ buffer });
-                textContent = result.value;
-                // Use DeepSeek for Text Summarization
-                summaryContent = await analyzeWithDeepSeek(textContent);
-            } else if (ext === '.xlsx' || ext === '.xls' || ext === '.csv') {
-                const workbook = XLSX.readFile(absolutePath);
-                workbook.SheetNames.forEach(sheetName => {
-                    const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
-                    textContent += `\n--- Sheet: ${sheetName} ---\n${csv}\n`;
-                });
-                // Use DeepSeek for Data Summarization
-                summaryContent = await analyzeWithDeepSeek(textContent);
-            } else if (ext === '.pdf') {
-                const buffer = fs.readFileSync(absolutePath);
-                try {
-                    const pdfData = await pdf(buffer);
-                    const extractedText = pdfData.text?.trim() || '';
-                    textContent = extractedText; // Save for RAG
-                    
-                    if (extractedText.length > 150) {
-                        // PDF has real text
-                        if (!query || isSummaryRequest(query)) {
-                            console.log(`[Mind] PDF text detected (${extractedText.length} chars). Using DeepSeek.`);
-                            summaryContent = await analyzeWithDeepSeek(extractedText);
-                        }
-                    } else {
-                        // PDF likely a scan -> Use Gemini Multimodal
-                        console.log(`[Mind] PDF text too short. Using Gemini Multimodal.`);
-                        const base64 = buffer.toString('base64');
-                        const apiKey = await getApiKey();
-                        const genAI = new GoogleGenerativeAI(apiKey);
-                        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-                        const prompt = "Berikan analisis dan ringkasan mendalam (inti sari) dari dokumen ini. Fokus pada fakta, angka, dan aturan penting.";
-                        const result = await model.generateContent([
-                            { text: prompt },
-                            { inlineData: { mimeType: 'application/pdf', data: base64 } }
-                        ]);
-                        summaryContent = result.response.text();
-                    }
-                } catch (pdfErr) {
-                    console.error('[Mind] PDF Parse Error, falling back to Gemini:', pdfErr.message);
-                    // Fallback to Gemini if pdf-parse fails
-                    const base64 = buffer.toString('base64');
-                    const apiKey = await getApiKey();
-                    const genAI = new GoogleGenerativeAI(apiKey);
-                    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-                    const result = await model.generateContent([{ text: "Ringkas dokumen ini:" }, { inlineData: { mimeType: 'application/pdf', data: base64 } }]);
-                    summaryContent = result.response.text();
-                }
-            } else if (ext === '.png' || ext === '.jpg' || ext === '.jpeg') {
-                const buffer = fs.readFileSync(absolutePath);
-                const base64 = buffer.toString('base64');
-                const mimeType = `image/${ext.replace('.','')}`;
-                
-                // Use Gemini for Image Analysis
-                const apiKey = await getApiKey();
-                const genAI = new GoogleGenerativeAI(apiKey);
-                const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+            const routeParams = {
+                message: query || "Berikan ringkasan eksekutif mendalam (inti sari) dari dokumen berikut. Fokus pada fakta, angka, dan aturan penting.",
+                attachmentList: [{
+                    name: file.nama_file,
+                    base64: buffer.toString('base64'),
+                    mimeType: mimeType,
+                    size: stats.size
+                }],
+                instansi_id: appId,
+                month: new Date().getMonth() + 1,
+                year: new Date().getFullYear(),
+                history: [],
+                user_name: "System",
+                profil_id: null,
+                onStepCallback: onStepCallback,
+                activeSessionId: 'analysis_brain'
+            };
 
-                const prompt = "Berikan analisis dan ringkasan mendalam (inti sari) dari gambar dokumen ini. Fokus pada fakta, angka, dan aturan penting.";
-                const result = await model.generateContent([
-                    { text: prompt },
-                    { inlineData: { mimeType, data: base64 } }
-                ]);
-                summaryContent = result.response.text();
-            } else {
-                textContent = fs.readFileSync(absolutePath, 'utf8');
-                if (!query || isSummaryRequest(query)) {
-                    summaryContent = await analyzeWithDeepSeek(textContent);
-                }
-            }
-
-            // --- NEW: RAG & Chunking ---
-            if (textContent && textContent.trim()) {
-                // Save to Cache Table
-                await dbNayaxa.query(
-                    'INSERT IGNORE INTO nayaxa_file_cache (file_hash, file_name, extracted_text) VALUES (?, ?, ?)',
-                    [fileHash, file.nama_file, textContent]
-                );
-
-                // Slice into Chunks & Save to Chunks Table
-                const chunks = chunkDocument(textContent, 1200, 250); // 1200 chars chunk, 250 overlap
-                for (let j = 0; j < chunks.length; j++) {
-                    await dbNayaxa.query(
-                        'INSERT IGNORE INTO nayaxa_file_chunks (file_hash, chunk_index, chunk_content) VALUES (?, ?, ?)',
-                        [fileHash, j, chunks[j]]
-                    );
-                }
-
-                // If this is a specific query, RETURN RAG context immediately instead of Master Summary!
-                if (query && !isSummaryRequest(query)) {
-                    console.log(`[Mind:RAG] Returning specific RAG context for query: "${query}"`);
-                    const hybridContext = await retrieveHybridContext(fileHash, query);
-                    return { success: true, content: hybridContext, source: file.nama_file };
-                }
-            }
+            const routingResult = await nayaxaRoutingService.routeChat(routeParams);
+            let summaryContent = routingResult ? routingResult.text : "";
 
             if (summaryContent && summaryContent.trim()) {
                 // Save to Knowledge Base
@@ -716,6 +556,18 @@ const nayaxaMindService = {
                 // Mark as indexed in dashboard
                 await dbDashboard.query('UPDATE dokumen_upload SET is_indexed = 1 WHERE id = ?', [file.id]);
 
+                // Update cache table master_summary if it's a summary request
+                if (!query || isSummaryRequest(query)) {
+                    await dbNayaxa.query(
+                        'INSERT IGNORE INTO nayaxa_file_cache (file_hash, file_name, extracted_text) VALUES (?, ?, "")',
+                        [fileHash, file.nama_file]
+                    );
+                    await dbNayaxa.query(
+                        'UPDATE nayaxa_file_cache SET master_summary = ? WHERE file_hash = ?',
+                        [summaryContent, fileHash]
+                    );
+                }
+
                 return {
                     success: true,
                     content: summaryContent,
@@ -723,7 +575,7 @@ const nayaxaMindService = {
                 };
             }
 
-            return { success: false, message: "Gagal mengekstrak teks dari dokumen." };
+            return { success: false, message: "Gagal memproses dokumen melalui Central AI Router." };
         } catch (error) {
             console.error('[Mind] Single Ingestion Error:', error);
             return { success: false, error: error.message };
@@ -749,9 +601,9 @@ const nayaxaMindService = {
         }, intervalMinutes * 60 * 1000);
     },
 
-    saveDocumentInsight,
     getNayaxaGeneralPersonaPrompt,
-    getNayaxaProtokolPrompt
+    getNayaxaProtokolPrompt,
+    saveDocumentInsight
 };
 
 module.exports = nayaxaMindService;

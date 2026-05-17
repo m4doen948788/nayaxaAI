@@ -19,10 +19,7 @@ const sanitizeText = (text) => {
         .replace(/<br\s*\/?>/gi, '\n') // Convert <br> to real newlines
         .replace(/<[^>]*>/g, '') // Strip remaining HTML tags
         .replace(/\*\*/g, '') // Strip bold asterisks (Word handles bolding separately)
-        .replace(/^\s*[-*]\s+/gm, '') // Strip bullet points at start of lines (Word/PDF adds their own)
-        .replace(/^[#\s]+|(?<=\n)[#\s]+/g, '') // Strip header hashes
-        .replace(/[`_~]/g, '') // Strip other common MD markers
-        .trim();
+        .replace(/[`_~]/g, ''); // Strip other common MD markers
 };
 
 /**
@@ -221,7 +218,7 @@ const exportService = {
                 continue;
             }
             
-            // 1. Smart Heading Detection (Numbers like 1. TITLE or # TITLE)
+            // 1. Smart Heading Detection
             let currentHeadingLevel = null;
             let cleanHeadingText = line;
 
@@ -235,15 +232,12 @@ const exportService = {
                 currentHeadingLevel = HeadingLevel.HEADING_3;
                 cleanHeadingText = line.replace(/^### /, '');
             } else if (/^[0-9]+\.\s+[A-Z\s]+$/.test(line)) { 
-                // Matches "1. DATA PENYEBAB" (Numbered + ALL CAPS)
                 currentHeadingLevel = HeadingLevel.HEADING_1;
             } else if (/^[A-Z]\.\s+[A-Z\s]+$/.test(line)) {
-                // Matches "A. PENDAHULUAN"
                 currentHeadingLevel = HeadingLevel.HEADING_2;
             }
 
             if (currentHeadingLevel) {
-                inNumberedList = false; // Reset list context on heading
                 children.push(new Paragraph({ 
                     text: sanitizeText(cleanHeadingText), 
                     heading: currentHeadingLevel,
@@ -271,7 +265,7 @@ const exportService = {
                                     alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
                                     spacing: { before: 40, after: 40 }
                                 })],
-                                shading: isHeader ? { fill: "4f46e5", type: ShadingType.CLEAR } : undefined,
+                                shading: isHeader ? { fill: "4F46E5", type: ShadingType.CLEAR } : undefined,
                                 verticalAlign: VerticalAlign.CENTER,
                                 margins: { top: 120, bottom: 120, left: 120, right: 120 },
                                 borders: {
@@ -292,8 +286,8 @@ const exportService = {
                     width: { size: 100, type: WidthType.PERCENTAGE },
                     alignment: AlignmentType.CENTER,
                     borders: {
-                        top: { style: BorderStyle.SINGLE, size: 2, color: "4f46e5" },
-                        bottom: { style: BorderStyle.SINGLE, size: 2, color: "4f46e5" },
+                        top: { style: BorderStyle.SINGLE, size: 2, color: "4F46E5" },
+                        bottom: { style: BorderStyle.SINGLE, size: 2, color: "4F46E5" },
                         left: { style: BorderStyle.SINGLE, size: 1, color: "E2E8F0" },
                         right: { style: BorderStyle.SINGLE, size: 1, color: "E2E8F0" },
                         insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: "E2E8F0" },
@@ -302,46 +296,31 @@ const exportService = {
                     spacing: { before: 300, after: 300 }
                 }));
                 
-                inNumberedList = false; // Reset list context on table
                 i = j - 1;
                 continue;
             }
 
-            // 3. List Item Detection (Bulleted or Numbered)
-            let isBullet = false;
-            let isNumbered = false;
-            let listItemText = line;
-            
+            // 3. List Item & Normal Text Detection
             if (/^[-*]\s/.test(line)) {
-                isBullet = true;
-                listItemText = line.replace(/^[-*]\s/, '');
-            } else if (/^[0-9]+\.\s/.test(line)) {
-                isNumbered = true;
-                listItemText = line.replace(/^[0-9]+\.\s/, '');
-            }
-            
-            const textRuns = processTextRuns(listItemText);
-            
-            if (isBullet || isNumbered) {
-                if (isNumbered && !inNumberedList) {
-                    listCounter++;
-                    inNumberedList = true;
-                } else if (!isNumbered) {
-                    inNumberedList = false;
-                }
-
+                const cleanItem = line.replace(/^[-*]\s/, '');
                 children.push(new Paragraph({
-                    children: textRuns,
-                    bullet: isBullet ? { level: 0 } : undefined,
-                    numbering: isNumbered ? { reference: `numbered-list-${listCounter}`, level: 0 } : undefined,
-                    spacing: { line: docxLineSpacing, before: 100 },
+                    children: processTextRuns(cleanItem),
+                    bullet: { level: 0 },
+                    spacing: { line: docxLineSpacing, before: 60, after: 60 },
+                    alignment: AlignmentType.JUSTIFIED
+                }));
+            } else if (/^[0-9]+\.\s/.test(line)) {
+                // Preserve original numbers with hanging indent for robust formatting
+                children.push(new Paragraph({
+                    children: processTextRuns(line),
+                    indent: { left: 360, hanging: 360 },
+                    spacing: { line: docxLineSpacing, before: 60, after: 60 },
                     alignment: AlignmentType.JUSTIFIED
                 }));
             } else {
-                inNumberedList = false; // Reset on plain text
                 children.push(new Paragraph({
-                    children: textRuns,
-                    spacing: { line: docxLineSpacing, before: 80 },
+                    children: processTextRuns(line),
+                    spacing: { line: docxLineSpacing, before: 80, after: 80 },
                     alignment: AlignmentType.JUSTIFIED
                 }));
             }
@@ -361,8 +340,7 @@ const exportService = {
                         run: { font: font, size: docxFontSize + 8, bold: true, color: "1E293B" },
                         paragraph: { 
                             alignment: AlignmentType.LEFT, 
-                            spacing: { before: 400, after: 200 }, 
-                            border: { bottom: { color: "E2E8F0", space: 4, style: BorderStyle.SINGLE, size: 6 } } 
+                            spacing: { before: 400, after: 200 }
                         },
                     },
                     heading2: {
@@ -383,7 +361,6 @@ const exportService = {
             },
             sections: [{
                 properties: {
-                    type: "nextPage",
                     page: {
                         size: {
                             width: paperSize === "A4" ? 11906 : 12240,
@@ -400,23 +377,6 @@ const exportService = {
                 children: children
             }]
         };
-
-        if (listCounter > 0) {
-            docOptions.numbering = {
-                config: Array.from({ length: listCounter }, (_, idx) => ({
-                    reference: `numbered-list-${idx + 1}`,
-                    levels: [
-                        {
-                            level: 0,
-                            format: "decimal",
-                            text: "%1.",
-                            alignment: AlignmentType.START,
-                            style: { paragraph: { indent: { left: 720, hanging: 360 } } },
-                        },
-                    ],
-                })),
-            };
-        }
 
         const doc = new Document(docOptions);
         const sanitized = filename.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');

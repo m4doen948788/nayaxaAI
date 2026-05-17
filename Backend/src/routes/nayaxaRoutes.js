@@ -15,6 +15,7 @@ const DASHBOARD_UPLOADS = isLocal
 
 // Public Export Download (For chat links)
 router.get('/export/:filename', nayaxaController.downloadExport);
+router.get('/api/nayaxa/export/:filename', nayaxaController.downloadExport);
 
 // Public Static Files (For previews in iframes/links)
 // Public Routes for Static Files (Dashboard Uploads & System Uploads)
@@ -37,6 +38,7 @@ router.all('/api/nayaxa/uploads/*', (req, res) => {
 router.use(verifyApiKey);
 
 router.get('/dashboard-insights', nayaxaController.getDashboardInsights);
+router.get('/widget-prompts', nayaxaController.getWidgetPrompts);
 router.get('/usage-stats', nayaxaController.getUsageStats);
 router.get('/proactive-insight', nayaxaController.getProactiveInsight);
 router.get('/sessions', nayaxaController.getChatSessions);
@@ -46,6 +48,8 @@ router.post('/session/:session_id/pin', nayaxaController.togglePinSession);
 router.post('/chat', nayaxaController.chat);
 router.post('/chatStream', nayaxaController.chatStream); // Widget & copy-dashboard
 router.post('/chat/stream', nayaxaController.chatStream); // Nayaxa standalone frontend
+router.post('/export-selected', nayaxaController.exportSelectedMessages);
+router.post('/api/nayaxa/export-selected', nayaxaController.exportSelectedMessages);
 
 // Knowledge management
 router.get('/knowledge', nayaxaKnowledgeController.getAll);

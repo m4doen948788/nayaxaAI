@@ -16,7 +16,10 @@ const applyInstansiFilter = (alias, instansi_id) => {
 const _nayaxaCache = {
     schema: { data: null, ts: 0 },
     glossary: { data: null, ts: 0 },
-    ttl: 3600 * 1000 // 1 hour
+    profiles: new Map(), // Key: profil_id, Value: { data: profile, ts: timestamp }
+    instansi: new Map(), // Key: instansi_id, Value: { data: name, ts: timestamp }
+    ttl: 3600 * 1000, // 1 hour for schema/glossary
+    shortTtl: 3600 * 1000 // 60 minutes for profiles (increased for better stability)
 };
 
 const nayaxaStandalone = {
@@ -333,9 +336,18 @@ ${dynamicGlossary}`;
     getInstansiName: async (instansi_id) => {
         try {
             if (!instansi_id) return 'N/A';
+            
+            // Check Cache
+            const cached = _nayaxaCache.instansi.get(instansi_id);
+            if (cached && (Date.now() - cached.ts < _nayaxaCache.shortTtl)) {
+                return cached.data;
+            }
+
             const [rows] = await pool.query('SELECT instansi, singkatan FROM master_instansi_daerah WHERE id = ?', [instansi_id]);
             if (rows.length > 0) {
-                return rows[0].singkatan ? `${rows[0].instansi} (${rows[0].singkatan})` : rows[0].instansi;
+                const name = rows[0].singkatan ? `${rows[0].instansi} (${rows[0].singkatan})` : rows[0].instansi;
+                _nayaxaCache.instansi.set(instansi_id, { data: name, ts: Date.now() });
+                return name;
             }
             return 'N/A';
         } catch (error) {
@@ -347,6 +359,13 @@ ${dynamicGlossary}`;
     getPegawaiProfile: async (profil_id, user_name = null) => {
         try {
             if (!profil_id) return null;
+            
+            // Check Cache
+            const cached = _nayaxaCache.profiles.get(profil_id);
+            if (cached && (Date.now() - cached.ts < _nayaxaCache.shortTtl)) {
+                return cached.data;
+            }
+
             // 1. Fetch Basic Profile
             const [rows] = await pool.query(`
                 SELECT 
@@ -362,6 +381,8 @@ ${dynamicGlossary}`;
                 LIMIT 1
             `, [profil_id]);
             
+            let profile = null;
+
             if (rows.length === 0) {
                 // 2. SMART FALLBACK: If ID lookup fails, try matching by Nama Lengkap (if provided)
                 if (user_name) {
@@ -382,31 +403,38 @@ ${dynamicGlossary}`;
                     
                     if (nameRows.length > 0) {
                         console.log(`[Nayaxa] Smart Lookup SUCCESS: Found profile for ${user_name}`);
-                        return nameRows[0];
+                        profile = nameRows[0];
                     }
                 }
-                return null;
+            } else {
+                profile = rows[0];
             }
-            const profile = rows[0];
 
-            // 2. Fetch Managed Instances (Pengampuan)
+            if (!profile) return null;
+
+            // 3. Fetch Managed Instances (Pengampuan)
             if (profile.bidang_id) {
-                const [instansis] = await pool.query(`
-                    SELECT DISTINCT i.instansi
-                    FROM mapping_bidang_pengampu m
-                    JOIN master_instansi_daerah i ON m.instansi_id = i.id
-                    WHERE m.bidang_instansi_id = ?
-                `, [profile.bidang_id]);
-                profile.instansi_diampu = instansis.map(r => r.instansi);
-
-                const [urusans] = await pool.query(`
-                    SELECT DISTINCT u.urusan
-                    FROM mapping_bidang_pengampu m
-                    JOIN master_urusan u ON m.urusan_id = u.id
-                    WHERE m.bidang_instansi_id = ?
-                `, [profile.bidang_id]);
-                profile.urusan_diampu = urusans.map(r => r.urusan);
+                const [instansiDiampu, urusanDiampu] = await Promise.all([
+                    pool.query(`
+                        SELECT DISTINCT i.instansi
+                        FROM mapping_bidang_pengampu m
+                        JOIN master_instansi_daerah i ON m.instansi_id = i.id
+                        WHERE m.bidang_instansi_id = ?
+                    `, [profile.bidang_id]).then(res => res[0].map(r => r.instansi)),
+                    pool.query(`
+                        SELECT DISTINCT u.urusan
+                        FROM mapping_bidang_pengampu m
+                        JOIN master_urusan u ON m.urusan_id = u.id
+                        WHERE m.bidang_instansi_id = ?
+                    `, [profile.bidang_id]).then(res => res[0].map(r => r.urusan))
+                ]);
+                
+                profile.instansi_diampu = instansiDiampu;
+                profile.urusan_diampu = urusanDiampu;
             }
+
+            // Save to Cache
+            _nayaxaCache.profiles.set(profil_id, { data: profile, ts: Date.now() });
 
             return profile;
         } catch (error) {
@@ -718,102 +746,34 @@ ${dynamicGlossary}`;
 
             // WATERFALL API HELPER
             const searchViaAPIs = async (searchQuery, limit = 5) => {
-                console.log(`[Nayaxa] Fetching from Trusted APIs for: ${searchQuery}`);
+                console.log(`[Nayaxa] Fetching from Trusted APIs (Parallel) for: ${searchQuery}`);
+                const apiTasks = [];
                 
-                // 1. Serper.dev (Highest Priority - Fast & Comprehensive)
+                // 1. Serper.dev
                 if (process.env.SERPER_API_KEY) {
-                    try {
-                        const res = await axios.post('https://google.serper.dev/search', { q: searchQuery, gl: "id", hl: "id" }, {
-                            headers: { 'X-API-KEY': process.env.SERPER_API_KEY, 'Content-Type': 'application/json' },
-                            timeout: 10000
-                        });
-                        if (res.data?.organic?.length > 0) {
-                            return res.data.organic.slice(0, limit).map(r => ({ source: 'Google (Serper)', title: r.title, snippet: r.snippet, link: r.link }));
-                        }
-                    } catch (e) { console.error('[Nayaxa] Serper API Error:', e.message); }
+                    apiTasks.push(axios.post('https://google.serper.dev/search', { q: searchQuery, gl: "id", hl: "id" }, {
+                        headers: { 'X-API-KEY': process.env.SERPER_API_KEY, 'Content-Type': 'application/json' },
+                        timeout: 5000
+                    }).then(res => res.data?.organic?.slice(0, limit).map(r => ({ source: 'Google (Serper)', title: r.title, snippet: r.snippet, link: r.link })) || []).catch(() => []));
                 }
 
-                /* 
-                // 2. Google Custom Search (Official - 100/day Free)
-                if (process.env.GOOGLE_SEARCH_API_KEY && process.env.GOOGLE_SEARCH_CX_ID) {
-                    try {
-                        const res = await axios.get('https://www.googleapis.com/customsearch/v1', {
-                            params: { key: process.env.GOOGLE_SEARCH_API_KEY, cx: process.env.GOOGLE_SEARCH_CX_ID, q: searchQuery },
-                            timeout: 10000
-                        });
-                        if (res.data?.items?.length > 0) {
-                            return res.data.items.slice(0, limit).map(r => ({ source: 'Google Official', title: r.title, snippet: r.snippet, link: r.link }));
-                        }
-                    } catch (e) { console.error('[Nayaxa] Google Official API Error:', e.message); }
-                }
-                */
-
-                // 3. Tavily (Specialized for AI/LLM)
+                // 2. Tavily
                 if (process.env.TAVILY_API_KEY) {
-                    try {
-                        const res = await axios.post('https://api.tavily.com/search', { api_key: process.env.TAVILY_API_KEY, query: searchQuery, max_results: limit }, { timeout: 10000 });
-                        if (res.data?.results?.length > 0) {
-                            return res.data.results.map(r => ({ source: 'Tavily (AI)', title: r.title, snippet: r.content, link: r.url }));
-                        }
-                    } catch (e) { console.error('[Nayaxa] Tavily API Error:', e.message); }
+                    apiTasks.push(axios.post('https://api.tavily.com/search', { api_key: process.env.TAVILY_API_KEY, query: searchQuery, max_results: limit }, { timeout: 5000 })
+                        .then(res => res.data?.results?.map(r => ({ source: 'Tavily (AI)', title: r.title, snippet: r.content, link: r.url })) || []).catch(() => []));
                 }
 
-                // 4. Brave Search (Independent - 2.000/mo Free)
+                // 3. Brave Search
                 if (process.env.BRAVE_SEARCH_API_KEY) {
-                    try {
-                        const res = await axios.get('https://api.search.brave.com/res/v1/web/search', {
-                            params: { q: searchQuery, count: limit },
-                            headers: { 'X-Subscription-Token': process.env.BRAVE_SEARCH_API_KEY, 'Accept': 'application/json' },
-                            timeout: 10000
-                        });
-                        if (res.data?.web?.results?.length > 0) {
-                            return res.data.web.results.slice(0, limit).map(r => ({ source: 'Brave Search', title: r.title, snippet: r.description, link: r.url }));
-                        }
-                    } catch (e) { console.error('[Nayaxa] Brave Search API Error:', e.message); }
+                    apiTasks.push(axios.get('https://api.search.brave.com/res/v1/web/search', {
+                        params: { q: searchQuery, count: limit },
+                        headers: { 'X-Subscription-Token': process.env.BRAVE_SEARCH_API_KEY, 'Accept': 'application/json' },
+                        timeout: 5000
+                    }).then(res => res.data?.web?.results?.slice(0, limit).map(r => ({ source: 'Brave Search', title: r.title, snippet: r.description, link: r.url })) || []).catch(() => []));
                 }
 
-                // 5. SerpApi (Tertiary)
-                if (process.env.SERPAPI_API_KEY) {
-                    try {
-                        const res = await axios.get('https://serpapi.com/search', {
-                            params: { q: searchQuery, gl: 'id', hl: 'id', api_key: process.env.SERPAPI_API_KEY },
-                            timeout: 10000
-                        });
-                        if (res.data?.organic_results?.length > 0) {
-                            return res.data.organic_results.slice(0, limit).map(r => ({ source: 'SerpApi', title: r.title, snippet: r.snippet, link: r.link }));
-                        }
-                    } catch (e) { console.error('[Nayaxa] SerpApi Error:', e.message); }
-                }
-
-                // 6. HasData (Quaternary)
-                if (process.env.HASDATA_API_KEY) {
-                    try {
-                        const res = await axios.get('https://api.hasdata.com/scrape/google/serp', {
-                            params: { q: searchQuery, gl: 'id', hl: 'id' },
-                            headers: { 'x-api-key': process.env.HASDATA_API_KEY },
-                            timeout: 10000
-                        });
-                        const organicResults = res.data?.organicResults || res.data?.organic_results;
-                        if (organicResults?.length > 0) {
-                            return organicResults.slice(0, limit).map(r => ({ source: 'HasData', title: r.title, snippet: r.snippet || r.description, link: r.link || r.url }));
-                        }
-                    } catch (e) { console.error('[Nayaxa] HasData API Error:', e.response ? e.response.data : e.message); }
-                }
-
-                // 7. Scrape.do (Quinary)
-                if (process.env.SCRAPEDO_API_KEY) {
-                    try {
-                        const res = await axios.get('https://api.scrape.do/plugin/google/search', {
-                            params: { q: searchQuery, token: process.env.SCRAPEDO_API_KEY, gl: 'id', hl: 'id' },
-                            timeout: 10000
-                        });
-                        const organicResults = res.data?.organicResults || res.data?.organic_results;
-                        if (organicResults?.length > 0) {
-                            return organicResults.slice(0, limit).map(r => ({ source: 'Scrape.do', title: r.title, snippet: r.snippet || r.description, link: r.link || r.url }));
-                        }
-                    } catch (e) { console.error('[Nayaxa] Scrape.do API Error:', e.response ? e.response.data : e.message); }
-                }
-                return [];
+                const allResults = await Promise.all(apiTasks);
+                return allResults.flat();
             };
 
             // QUERY AUGMENTATION
@@ -853,33 +813,37 @@ ${dynamicGlossary}`;
             }
 
             // EXECUTION: New Aggressive API Strategy
-            const hasAnyAPI = (process.env.SERPER_API_KEY || process.env.TAVILY_API_KEY || process.env.SERPAPI_API_KEY || process.env.HASDATA_API_KEY || process.env.SCRAPEDO_API_KEY);
+            const hasAnyAPI = !!(process.env.SERPER_API_KEY || process.env.TAVILY_API_KEY || process.env.BRAVE_SEARCH_API_KEY);
             
-            // 1. Try APIs first if available
-            if (hasAnyAPI) {
-                const apiLimit = isHeavyQuery ? 8 : 5;
-                const searchQ = isHeavyQuery ? queriesToTry[0] : cleanQuery;
-                const apiResults = await searchViaAPIs(searchQ, apiLimit);
-                if (apiResults.length > 0) results.push(...apiResults);
-            }
-            
-            // 2. Fetch Wikipedia Immediately
-            try {
-                const wikiQ = isHeavyQuery ? queriesToTry[0] : cleanQuery;
-                const wikiRes = await axios.get(`https://id.wikipedia.org/w/api.php`, {
-                    params: { action: 'query', format: 'json', list: 'search', srsearch: wikiQ, srlimit: 2 },
-                    headers: { 'User-Agent': 'NayaxaBot/1.1' },
-                    timeout: 5000
-                });
-                if (wikiRes.data.query?.search) {
-                    wikiRes.data.query.search.forEach(s => results.push({ source: 'Wikipedia', title: s.title, snippet: s.snippet.replace(/<[^>]*>/g, ''), link: `https://id.wikipedia.org/wiki/${encodeURIComponent(s.title)}` }));
-                }
-            } catch (err) {}
+            // 1 & 2. Try APIs and Wikipedia in Parallel (Garda Terdepan)
+            const mainTasks = [];
+            const apiLimit = isHeavyQuery ? 8 : 5;
+            const searchQ = isHeavyQuery ? queriesToTry[0] : cleanQuery;
 
-            // 3. Fallback to Native Scraper if results are too few (Lapis 0)
-            if (results.length < 5) {
-                console.log(`[Nayaxa] API & Wikipedia hits too low (${results.length}), falling back to Native Scrapers...`);
-                // Give Bing an edge to reduce Google blocks but try both
+            if (hasAnyAPI) {
+                mainTasks.push(searchViaAPIs(searchQ, apiLimit).then(res => results.push(...res)));
+            }
+
+            // Wikipedia Task
+            mainTasks.push((async () => {
+                try {
+                    const wikiQ = isHeavyQuery ? queriesToTry[0] : cleanQuery;
+                    const wikiRes = await axios.get(`https://id.wikipedia.org/w/api.php`, {
+                        params: { action: 'query', format: 'json', list: 'search', srsearch: wikiQ, srlimit: 2 },
+                        headers: { 'User-Agent': 'NayaxaBot/1.1' },
+                        timeout: 3000
+                    });
+                    if (wikiRes.data.query?.search) {
+                        wikiRes.data.query.search.forEach(s => results.push({ source: 'Wikipedia', title: s.title, snippet: s.snippet.replace(/<[^>]*>/g, ''), link: `https://id.wikipedia.org/wiki/${encodeURIComponent(s.title)}` }));
+                    }
+                } catch (err) {}
+            })());
+
+            await Promise.all(mainTasks);
+            
+            // 3. Fallback to Native Scrapers ONLY if results are still very few
+            if (results.length < 3) {
+                console.log(`[Nayaxa] Fast hits too low (${results.length}), trying Native Scrapers...`);
                 await Promise.all([scrapeGoogle(cleanQuery), scrapeBing(queriesToTry[1] || cleanQuery)]);
             }
 

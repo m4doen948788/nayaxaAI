@@ -44,6 +44,16 @@ export default function NayaxaAssistant({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [widgetPrompts, setWidgetPrompts] = useState<{ label: string, prompt: string }[]>([]);
+
+  useEffect(() => {
+    api.getWidgetPrompts().then(res => {
+      if (res && res.success) {
+        setWidgetPrompts(res.data || []);
+      }
+    }).catch(err => console.error(err));
+  }, []);
+
   // Timer for "Thought for X seconds"
   useEffect(() => {
     let interval: any;
@@ -234,7 +244,7 @@ export default function NayaxaAssistant({
               )}
 
               <div className="prose prose-sm prose-slate max-w-none prose-p:my-1 prose-headings:mb-2">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content || ''}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{typeof m.content === 'string' ? m.content.replace(/\[FILE:[\s\S]*?ACTION:[\s\S]*?\]/gi, '').trim() || (m.role === 'user' ? '*(Mengirimkan lampiran)*' : '') : m.content || ''}</ReactMarkdown>
               </div>
             </div>
             {m.role === 'model' && m.brain_used && (
@@ -373,18 +383,25 @@ export default function NayaxaAssistant({
                   {/* Widget Action Dropdown */}
                   <div className="p-1 bg-slate-100 border-t border-slate-200">
                     <select 
-                      value={file.action || 'Bahan Analisis'}
+                      value={file.action || (widgetPrompts[0]?.prompt || 'Analisis')}
                       onChange={(e) => {
                         const newAction = e.target.value;
                         setSelectedFiles(prev => prev.map((f, i) => i === idx ? { ...f, action: newAction } : f));
                       }}
-                      className="w-full bg-transparent text-[8px] text-indigo-600 font-bold outline-none cursor-pointer"
+                      className="w-full bg-transparent text-[8px] text-indigo-600 font-bold outline-none cursor-pointer truncate"
                     >
-                      <option value="Bahan Analisis">Bahan</option>
-                      <option value="Jadikan Acuan Format">Format</option>
-                      <option value="Buatkan Ringkasan">Ringkas</option>
-                      <option value="Buatkan Ringkasan+Notulen">Notulen</option>
-                      <option value="Buatkan Ringkasan+Notulen+Word">Word</option>
+                      {widgetPrompts.length > 0 ? widgetPrompts.map((wp, i) => (
+                        <option key={i} value={wp.prompt}>{wp.label}</option>
+                      )) : (
+                        <>
+                          <option value="Analisis">Analisis</option>
+                          <option value="Jadikan Acuan Bahan">Jadikan Acuan Bahan</option>
+                          <option value="Jadikan Acuan Format">Jadikan Acuan Format</option>
+                          <option value="Buatkan Ringkasan">Buatkan Ringkasan</option>
+                          <option value="Buatkan Ringkasan+Notulen">Ringkasan+Notulen</option>
+                          <option value="Buatkan Ringkasan+Notulen+Word">Ringkasan+Notulen+Word</option>
+                        </>
+                      )}
                     </select>
                   </div>
                 </motion.div>

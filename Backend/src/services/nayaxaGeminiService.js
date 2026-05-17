@@ -9,28 +9,58 @@ const knowledgeTool = require('./knowledgeTool');
 const XLSX = require('xlsx');
 const pptxService = require('./pptxService');
 const codeAgent = require('./codeAgentService');
-const nayaxaMindService = require('./nayaxaMindService');
+const nayaxaPromptService = require('./nayaxaPromptService');
+const pdf = require('pdf-parse');
+const docxTableUpdater = require('./docxTableUpdater');
 
 const summaryCache = new Map();
+const _keyCache = { data: null, ts: 0, ttl: 120000 }; // 2 minutes cache
 
 /**
  * Get the primary Gemini API key.
- * Now supports excluding a key that just failed (503/429).
+ * Now supports excluding a key that just failed and preferring a specific type.
  */
-const getApiKey = async (excludeKey = null) => {
+const getApiKey = async (excludeKeys = null, preferredType = null) => {
     try {
-        let query = 'SELECT api_key FROM gemini_api_keys WHERE is_active = 1';
-        let params = [];
-        if (excludeKey) {
-            query += ' AND api_key != ?';
-            params.push(excludeKey);
+        const now = Date.now();
+        // Check cache (only if not rotating/excluding)
+        if (!excludeKeys && _keyCache.data && (now - _keyCache.ts < _keyCache.ttl)) {
+            const filtered = preferredType 
+                ? _keyCache.data.filter(k => k.jenis_ai === preferredType)
+                : _keyCache.data.filter(k => k.jenis_ai.includes('Gemini'));
+            
+            if (filtered.length > 0) return filtered[0].api_key;
         }
-        query += ' ORDER BY last_used ASC LIMIT 1';
+
+        let query = 'SELECT api_key, jenis_ai FROM gemini_api_keys WHERE is_active = 1';
+        let params = [];
+        
+        if (preferredType) {
+            query += ' AND jenis_ai = ?';
+            params.push(preferredType);
+        } else {
+            query += " AND jenis_ai IN ('Gemini Free', 'Gemini Paid')";
+        }
+
+        if (excludeKeys) {
+            const excludes = Array.isArray(excludeKeys) ? excludeKeys : [excludeKeys];
+            if (excludes.length > 0) {
+                query += ` AND api_key NOT IN (${excludes.map(() => '?').join(',')})`;
+                params.push(...excludes);
+            }
+        }
+        
+        query += ' ORDER BY FIELD(jenis_ai, "Gemini Paid", "Gemini Free"), last_used ASC';
         
         const [rows] = await dbNayaxa.query(query, params);
         if (rows.length > 0) {
+            // Update cache
+            if (!excludeKeys && !preferredType) {
+                _keyCache.data = rows;
+                _keyCache.ts = now;
+            }
+
             const selectedKey = rows[0].api_key;
-            // Background: Update last_used
             dbNayaxa.query('UPDATE gemini_api_keys SET last_used = NOW() WHERE api_key = ?', [selectedKey]).catch(() => {});
             return selectedKey;
         }
@@ -41,7 +71,7 @@ const getApiKey = async (excludeKey = null) => {
 };
 
 
-const DEFAULT_MODEL = 'gemini-2.5-flash';
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
 const nayaxaTools = [{
     functionDeclarations: [
@@ -106,7 +136,7 @@ const nayaxaTools = [{
         },
         {
             name: "generate_document",
-            description: "Membuat dokumen teks atau tabel (PDF, Excel, atau Word). DILARANG KERAS menggunakan tool ini untuk membuat presentasi/paparan/slides.",
+            description: "Membuat dokumen teks atau tabel baru. Jika user ingin mengekspor RIWAYAT OBROLAN, gunakan 'export_discussion_to_word'. DILARANG KERAS menggunakan tool ini untuk membuat presentasi/paparan/slides.",
             parameters: {
                 type: "object",
                 properties: {
@@ -126,6 +156,18 @@ const nayaxaTools = [{
                     }
                 },
                 required: ["format", "content", "filename"]
+            }
+        },
+        {
+            name: "export_discussion_to_word",
+            description: "Alat khusus untuk mencetak riwayat percakapan ke file Word (.docx). DILARANG KERAS mengetik ulang isi percakapan di layar chat jika user hanya meminta file Word. Gunakan alat ini untuk mengambil data langsung dari database secara otomatis dan memberikan link download secara instan.",
+            parameters: {
+                type: "object",
+                properties: {
+                    topik_yang_dipilih: { type: "string", description: "Topik spesifik yang ingin dirangkum (misal: 'Metode Penelitian'). Jika user meminta merangkum semua obrolan, isi dengan 'ALL'." },
+                    filename: { type: "string", description: "Nama file output (misal: 'Rangkuman_Diskusi.docx')" }
+                },
+                required: ["topik_yang_dipilih", "filename"]
             }
         },
         {
@@ -263,6 +305,33 @@ const nayaxaTools = [{
                 }, 
                 required: ["file_hash", "sub_topic", "insight_content", "user_query"] 
             } 
+        },
+        {
+            name: "scan_document_tables",
+            description: "Memindai dan membaca struktur semua tabel di dalam dokumen DOCX yang diunggah user. Gunakan tool ini PERTAMA KALI sebelum update_document_tables untuk mengetahui ID tabel, nama header kolom, dan label baris yang tersedia.",
+            parameters: {
+                type: "object",
+                properties: {},
+                required: []
+            }
+        },
+        {
+            name: "update_document_tables",
+            description: "Memperbarui data di dalam tabel-tabel dokumen DOCX berdasarkan mapping yang telah dianalisis. Hasilkan dokumen DOCX baru yang lengkap dengan data yang sudah diperbarui. WAJIB dipanggil setelah scan_document_tables.",
+            parameters: {
+                type: "object",
+                properties: {
+                    updates_json: {
+                        type: "string",
+                        description: "JSON Array berisi daftar update. Format: [{\"table_id\": 1, \"row_label\": \"Nama Program/Kegiatan\", \"column_header\": \"Realisasi\", \"new_value\": \"450000000\"}]"
+                    },
+                    filename: {
+                        type: "string",
+                        description: "Nama file output DOCX (misal: 'laporan_updated.docx')"
+                    }
+                },
+                required: ["updates_json", "filename"]
+            }
         },
         // --- CODING AGENT TOOLS ---
         {
@@ -403,6 +472,47 @@ const toolFunctions = {
             return { success: false, error: err.message };
         }
     },
+    export_discussion_to_word: async ({ topik_yang_dipilih, filename }, { baseUrl, session_id }) => {
+        try {
+            if (!session_id) return { success: false, error: "Session ID tidak ditemukan." };
+            
+            const [rows] = await dbNayaxa.query(
+                "SELECT content FROM nayaxa_chat_history WHERE session_id = ? AND role = 'assistant' AND brain_used IS NOT NULL ORDER BY created_at ASC",
+                [session_id]
+            );
+
+            if (rows.length === 0) {
+                return { success: false, error: "Tidak ada riwayat pembahasan dari AI dalam sesi ini." };
+            }
+
+            let filteredMessages = rows.map(r => r.content);
+
+            if (topik_yang_dipilih && topik_yang_dipilih.toUpperCase() !== 'ALL') {
+                const topicKeywords = topik_yang_dipilih.toLowerCase().split(' ').filter(k => k.length > 3);
+                if (topicKeywords.length > 0) {
+                    const matched = rows.map(r => r.content).filter(content => {
+                        const lower = content.toLowerCase();
+                        return topicKeywords.some(k => lower.includes(k));
+                    });
+                    if (matched.length > 0) {
+                        filteredMessages = matched;
+                    }
+                }
+            }
+
+            const fullContent = filteredMessages.join('\n\n');
+            const downloadPath = await exportService.generateWord(fullContent, filename || 'Rangkuman_Diskusi.docx');
+            const downloadUrl = downloadPath.startsWith('http') ? downloadPath : `${baseUrl}${downloadPath}`;
+
+            return { 
+                success: true, 
+                download_url: downloadUrl, 
+                message: `File Word rangkuman obrolan '${filename}' untuk topik '${topik_yang_dipilih}' berhasil dibuat secara otomatis dari riwayat. JANGAN tuliskan link download di jawaban Anda, karena sistem sudah menampilkannya melalui tombol.` 
+            };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    },
     generate_chart: async ({ type, title, data, series, unit, color }) => {
         try {
             let chartSpec;
@@ -429,8 +539,9 @@ const toolFunctions = {
         const results = await nayaxaStandalone.searchLibrary(query);
         return { search_results: results };
     },
-    analyze_dashboard_document: async ({ file_id, query }, { app_id }) => {
-        const result = await nayaxaMindService.analyzeAndIngestDocument(file_id, app_id, query);
+    analyze_dashboard_document: async ({ file_id, query }, { app_id, onStepCallback }) => {
+        const nayaxaMindService = require('./nayaxaMindService');
+        const result = await nayaxaMindService.analyzeAndIngestDocument(file_id, app_id, query, onStepCallback);
         return { analysis_result: result };
     },
     fill_excel_template: async ({ filled_data, filename }, { excelBase64, baseUrl }) => {
@@ -459,7 +570,34 @@ const toolFunctions = {
         }
     },
     save_document_insight: async ({ file_hash, sub_topic, insight_content, user_query }) => {
+        const nayaxaMindService = require('./nayaxaMindService');
         return await nayaxaMindService.saveDocumentInsight(file_hash, sub_topic, insight_content, user_query);
+    },
+    scan_document_tables: async (args, { excelBase64, docxBase64 }) => {
+        try {
+            const base64 = docxBase64 || excelBase64;
+            if (!base64) return { success: false, error: 'Tidak ada dokumen DOCX yang ditemukan dalam konteks percakapan. Pastikan user sudah mengunggah file DOCX.' };
+            const result = await docxTableUpdater.getTableSummary(base64);
+            return result;
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    },
+    update_document_tables: async ({ updates_json, filename }, { excelBase64, docxBase64, baseUrl }) => {
+        try {
+            const base64 = docxBase64 || excelBase64;
+            if (!base64) return { success: false, error: 'Tidak ada dokumen DOCX yang ditemukan dalam konteks percakapan.' };
+            const result = await docxTableUpdater.updateDocumentTables(base64, updates_json, filename);
+            if (result.success) {
+                const fullUrl = result.download_path.startsWith('http') ? result.download_path : `${baseUrl}${result.download_path}`;
+                result.download_url = fullUrl;
+                result.download_path = undefined;
+                result.message = `${result.message} JANGAN tuliskan link download di jawaban Anda, karena sistem sudah menampilkannya secara otomatis melalui tombol.`;
+            }
+            return result;
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
     },
     // --- CODING AGENT TOOL IMPLEMENTATIONS ---
     list_project_files: async ({ dir_path }) => {
@@ -534,10 +672,189 @@ const checkNeedSchema = (userMessage, prevHistory = [], coding_mode = false) => 
     return /database|sql|query|tabel|table|pegawai|absen|kehadiran|kegiatan|aktivitas|ranking|bidang|jabatan|rekap|statistik|data|jumlah|scoring/i.test(combinedText);
 };
 
+// --- HELPER CHUNKING & RELEVANCE SCORING (TF-IDF Hybrid style) ---
+const chunkDocument = (text, size = 1000, overlap = 200) => {
+    const chunks = [];
+    let i = 0;
+    while (i < text.length) {
+        const chunk = text.slice(i, i + size);
+        chunks.push(chunk);
+        if (text.length - i <= size) break;
+        i += (size - overlap);
+    }
+    return chunks;
+};
+
+const calculateRelevanceScore = (text, query) => {
+    const queryWords = query.toLowerCase()
+        .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g,"")
+        .split(/\s+/)
+        .filter(w => w.length > 2);
+    if (queryWords.length === 0) return 0;
+    
+    let score = 0;
+    const lowerText = text.toLowerCase();
+    queryWords.forEach(word => {
+        try {
+            const escapedWord = word.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+            const regex = new RegExp(escapedWord, 'g');
+            const count = (lowerText.match(regex) || []).length;
+            score += count * (word.length); // Longer words are weighted more heavily
+        } catch (e) {}
+    });
+    return score;
+};
+
+const isSummaryRequest = (query) => {
+    return /rangkum|ringkas|summary|summarize|analisis komprehensif|master summary|kesimpulan|inti dari|poin-poin|seluruh isi/i.test(query);
+};
+
+// --- BACKGROUND MASTER SUMMARY GENERATOR ---
+const generateMasterSummaryInBackground = async (fileHash, fileName, extractedText, apiKey) => {
+    try {
+        console.log(`[Gemini:Background] Starting Master Summary generation for "${fileName}"...`);
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({ model: DEFAULT_MODEL });
+
+        const prompt = `Analisis dan ringkas isi dokumen berikut secara mendalam agar saya bisa memahaminya sebagai referensi masa depan. 
+        Sertakan: (1) Inti dokumen, (2) Angka-angka penting jika ada, (3) Aturan/Ketentuan kritis.
+        NAMA FILE: ${fileName}
+        ISI TEKS:
+        ${extractedText.substring(0, 30000)}`;
+
+        const result = await model.generateContent(prompt);
+        const masterSummary = result.response.text();
+
+        if (masterSummary) {
+            await dbNayaxa.query(
+                'UPDATE nayaxa_file_cache SET master_summary = ? WHERE file_hash = ?',
+                [masterSummary, fileHash]
+            );
+            console.log(`[Gemini:Background] Successfully saved Master Summary for "${fileName}".`);
+        }
+    } catch (err) {
+        console.error(`[Gemini:Background] Failed to generate Master Summary for "${fileName}":`, err.message);
+    }
+};
+
+// --- DYNAMIC COLLABORATIVE MEMORY & SATURATION HELPERS ---
+const retrieveHybridContext = async (fileHash, query, onStepCallback = null) => {
+    let context = "";
+    let isSaturated = false;
+
+    try {
+        // Check global configuration for Collaborative Memory
+        const [configRows] = await dbNayaxa.query(
+            "SELECT config_value FROM nayaxa_global_configs WHERE config_key = 'ENABLE_COLLABORATIVE_MEMORY' LIMIT 1"
+        );
+        const isMemEnabled = configRows.length > 0 ? configRows[0].config_value === '1' : true;
+
+        let insights = [];
+        if (isMemEnabled) {
+            const [res] = await dbNayaxa.query(
+                'SELECT sub_topic, summary, is_saturated, maturity_score FROM nayaxa_file_insights WHERE file_hash = ?',
+                [fileHash]
+            );
+            insights = res;
+        }
+
+        let relevantInsight = null;
+        if (insights.length > 0) {
+            // Cari sub_topic paling relevan berdasarkan relevansi kueri pengguna
+            let maxScore = 0;
+            insights.forEach(ins => {
+                const score = calculateRelevanceScore(ins.sub_topic + " " + ins.summary, query);
+                if (score > maxScore && score > 5) { // Threshold minimal kecocokan
+                    maxScore = score;
+                    relevantInsight = ins;
+                }
+            });
+        }
+
+        if (relevantInsight) {
+            console.log(`[CollaborativeMemory] Found relevant insight for topic "${relevantInsight.sub_topic}" (Maturity: ${relevantInsight.maturity_score}, Saturated: ${relevantInsight.is_saturated})`);
+            
+            if (onStepCallback) {
+                onStepCallback({
+                    icon: '🧠',
+                    label: `Membaca memori pengetahuan kolaboratif: "${relevantInsight.sub_topic}"`
+                });
+            }
+
+            context += `\n=== MEMORI PENGETAHUAN KOLABORATIF (${relevantInsight.sub_topic.toUpperCase()}) ===\n${relevantInsight.summary}\n`;
+
+            if (relevantInsight.is_saturated === 1) {
+                isSaturated = true;
+                if (onStepCallback) {
+                    onStepCallback({
+                        icon: '🎓',
+                        label: `Materi "${relevantInsight.sub_topic}" sudah matang sepenuhnya. Melewati ekstraksi dokumen mentah.`
+                    });
+                }
+            }
+        }
+
+        // 2. Jika tidak jenuh (not saturated), kita juga ambil chunks teks mentah yang relevan (Hybrid style!)
+        if (!isSaturated) {
+            if (onStepCallback) {
+                onStepCallback({
+                    icon: '🔍',
+                    label: "Memindai bagian dokumen mentah secara matematis semantik..."
+                });
+            }
+
+            const [chunks] = await dbNayaxa.query(
+                'SELECT chunk_content FROM nayaxa_file_chunks WHERE file_hash = ?',
+                [fileHash]
+            );
+
+            if (chunks.length > 0) {
+                // Berikan skor kecocokan kata kunci pada tiap chunk teks
+                const scoredChunks = chunks.map((c, idx) => ({
+                    content: c.chunk_content,
+                    score: calculateRelevanceScore(c.chunk_content, query),
+                    index: idx
+                }));
+
+                // Urutkan berdasarkan skor tertinggi dan ambil maksimal 8 chunk paling relevan
+                const topChunks = scoredChunks
+                    .filter(c => c.score > 0)
+                    .sort((a, b) => b.score - a.score)
+                    .slice(0, 8);
+
+                // Jika tidak ada kata kunci yang cocok sama sekali, ambil 4 chunks pertama sebagai default fallback
+                const selectedChunks = topChunks.length > 0 ? topChunks : scoredChunks.slice(0, 4);
+
+                context += `\n=== TEKS DOKUMEN ASLI ===\n` + selectedChunks.map(c => `[Fragmen #${c.index + 1}]\n${c.content}`).join('\n\n');
+            }
+        }
+
+    } catch (err) {
+        console.error('[CollaborativeMemory_Retrieve_Error]:', err.message);
+    }
+
+    return context;
+};
+
 const nayaxaGeminiService = {
-    chatWithNayaxa: async (userMessage, files, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '', nama_instansi = 'N/A', personaPromptSnippet = '', userProfile = null, lastActivityContext = null, coding_mode = false, session_id = null, onStepCallback = null, signal = null, forcePaidKey = false) => {
-        let apiKey = forcePaidKey ? process.env.GEMINI_API_KEY : await getApiKey();
+
+    chatWithNayaxa: async (userMessage, files, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '', nama_instansi = 'N/A', personaPromptSnippet = '', userProfile = null, lastActivityContext = null, coding_mode = false, session_id = null, onStepCallback = null, signal = null, keyPreference = false) => {
+        // keyPreference can be: true (Paid), false (Auto), 'Gemini Paid', or 'Gemini Free'
+        let preferredType = null;
+        if (keyPreference === true || keyPreference === 'Gemini Paid') preferredType = 'Gemini Paid';
+        else if (keyPreference === 'Gemini Free') preferredType = 'Gemini Free';
+
+        let apiKey = await getApiKey(null, preferredType);
         let attempts = 0;
+        let excludedKeys = [];
+        let currentModelName = DEFAULT_MODEL;
+
+        const safetySettings = [
+            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+        ];
         let lastError = null;
 
         const needSchema = checkNeedSchema(userMessage, prevHistory, coding_mode);
@@ -557,8 +874,8 @@ const nayaxaGeminiService = {
             - Bidang: ${userProfile.bidang || 'N/A'}
             - Jabatan: ${userProfile.jabatan || 'N/A'}
             - Nama Instansi: ${userProfile.nama_instansi || nama_instansi}
-            - Instansi yang Diampu: ${userProfile.instansi_diampu?.length > 0 ? userProfile.instansi_diampu.join(', ') : 'Tidak ada data pengampuan instansi.'}
-            - Urusan/Tugas yang Diampu: ${userProfile.urusan_diampu?.length > 0 ? userProfile.urusan_diampu.join(', ') : 'Tidak ada data pengampuan urusan.'}`;
+            - Instansi yang Diampu: ${Array.isArray(userProfile.instansi_diampu) && userProfile.instansi_diampu.length > 0 ? userProfile.instansi_diampu.join(', ') : (typeof userProfile.instansi_diampu === 'string' ? userProfile.instansi_diampu : 'Tidak ada data pengampuan instansi.')}
+            - Urusan/Tugas yang Diampu: ${Array.isArray(userProfile.urusan_diampu) && userProfile.urusan_diampu.length > 0 ? userProfile.urusan_diampu.join(', ') : (typeof userProfile.urusan_diampu === 'string' ? userProfile.urusan_diampu : 'Tidak ada data pengampuan urusan.')}`;
         }
 
         let projectStructureInfo = '';
@@ -583,7 +900,7 @@ WORKFLOW:
 4. Akhiri jawaban HANYA dengan ringkasan 1 kalimat perubahan dan marker [NAYAXA_PROPOSAL:id].
 - VISION: Jika user mengirimkan screenshot kode, error, atau desain UI, Anda WAJIB menganalisisnya secara visual untuk memandu perbaikan kode.`;
 
-        const generalPersonaPrompt = nayaxaMindService.getNayaxaGeneralPersonaPrompt(userProfile, user_name, lastActivityContext); /*
+        const generalPersonaPrompt = nayaxaPromptService.getNayaxaGeneralPersonaPrompt(userProfile, user_name, lastActivityContext); /*
 Gaya Bahasa: Sangat ceria, antusias, hangat, penuh semangat, profesional, dan empatik. Di akhir setiap penjelasan, SELALU tawarkan bantuan ekstra atau berikan satu pertanyaan pendek.
 PENTING: DILARANG KERAS MENGGUNAKAN EMOJI APAPUN.
         
@@ -629,13 +946,14 @@ PENTING - ADAPTASI FORMALITAS: Sesuaikan tingkat formalitas Anda dengan Profil K
             
             PENTING - FORMAT JAWABAN & ANALISIS MENDALAM:
             - **DILARANG TERLALU TO-THE-POINT / SINGKAT**: Jangan pernah menyajikan tabel data atau hasil kueri mentah begitu saja tanpa penjelasan. Anda adalah seorang Asisten Analis Senior Bapperida yang cerdas, sehingga Anda **WAJIB** memberikan narasi penjelasan yang kaya, interpretasi makna data, identifikasi tren, anomali, serta implikasi praktisnya terhadap instansi di setiap respon Anda.
-${nayaxaMindService.getNayaxaProtokolPrompt()}
+${nayaxaPromptService.getNayaxaProtokolPrompt()}
             - **STRUKTUR RESPONS ANALITIS PREMIUM**:
                 1. **Konteks & Pengantar**: Berikan pengantar ramah yang menjelaskan relevansi data yang sedang disajikan.
                 2. **Data Utama**: Sajikan data pokok secara rapi menggunakan Tabel Markdown, Grafik (melalui tool generate_chart jika relevan), atau List bertingkat yang indah.
                 3. **Analisis & Wawasan Mendalam (Insights)**: Berikan sub-bab khusus (misal: "### 📊 Analisis & Wawasan") untuk mengulas tren kenaikan/penurunan, perbandingan dengan periode lalu, efektivitas kinerja, atau anomali yang ditemukan.
                 4. **Rekomendasi / Kesimpulan**: Berikan ringkasan penutup taktis dan tawarkan bantuan lanjutan yang spesifik secara empatik.
             - SELALU gunakan format Markdown (Heading, Bold, Bullet Points, dan Tabel Markdown).
+            - **ATURAN SPASI BOLD (PENTING)**: Anda WAJIB memberikan spasi yang jelas sebelum dan sesudah kata yang ditebalkan (bold). Contoh yang BENAR: "Gubernur **Andra Soni** dilantik", Contoh yang SALAH: "Gubernur**Andra Soni**dilantik". Ini demi kerapian konversi dokumen.
             - **DILARANG KERAS mengeluarkan output berupa kode SQL mentah (seperti SELECT, JOIN, atau WHERE) langsung ke dalam chat.** Kode SQL hanya boleh digunakan secara internal di dalam parameter fungsi 'execute_sql_query'. Anda harus menyajikan hasil eksekusinya dalam bentuk Tabel Markdown.
             - DILARANG JSON mentah di chat.
             - ATURAN TRANSPARANSI: Jika jawaban berasal dari 'search_internet' (berita/pejabat/fakta publik), Anda WAJIB menambahkan footer transparansi di akhir jawaban Anda dengan format sebagai berikut:
@@ -646,16 +964,27 @@ ${nayaxaMindService.getNayaxaProtokolPrompt()}
               **Waktu Akses:** [Gunakan 'search_date' dari hasil tool secara utuh]
               **Catatan:** Informasi ini ditarik secara real-time melalui Nayaxa Resilience Mode. Untuk keperluan resmi, silakan merujuk pada dokumen negara atau situs kementerian terkait.
             
-            WAKTU AKTIF: Bulan ${month}, Tahun ${year}. Selalu gunakan nilai ini sebagai filter waktu default tanpa konfirmasi.
+            WAKTU AKTIF: ${fullDate}. Selalu gunakan nilai ini sebagai filter waktu default dan referensi sapaan waktu (Pagi/Siang/Sore/Malam).
             
             CATATAN DOKUMEN & FILE: 
+            - **FILE UNGGULAN CHAT (PENTING)**: Jika pesan pengguna diawali dengan format \`[FILE: nama_file -> ACTION: tindakan]\` (seperti \`[FILE: PM-3201-13-6-inovasi-pmba-1776053180.pdf -> ACTION: Analisis]\`), ini adalah file yang BARU saja diunggah di dalam chat obrolan ini. Teks dari file ini SUDAH diekstrak dan disertakan dalam konteks pesan (\`[DOKUMEN DIUNGGAH DI CHAT]\`). Anda **DILARANG KERAS** menggunakan tool 'analyze_dashboard_document' atau 'search_files_and_knowledge' untuk mencari file ini di database/dashboard. Cukup baca isi teks yang sudah diberikan dan langsung jawab secara instan!
             - **DOKUMEN TERLAMPIR / DIUNGGAH**: Jika user mengunggah file (PDF/Excel/Word/Gambar) dan meminta Anda menganalisisnya, **ANDA WAJIB LANGSUNG membaca, menganalisis, dan menyajikan hasilnya di pesan yang sama secara instan!** DILARANG KERAS beralasan "membutuhkan waktu untuk memproses", "izinkan saya menganalisis", atau "sembari saya membaca". Anda adalah AI yang memproses seketika, BUKAN manusia!
             - Jika user bertanya tentang dokumen, mencari file, atau meminta file spesifik ("Mana dokumen X?", "Minta file Y"), Anda WAJIB LANGSUNG menggunakan tool 'search_files_and_knowledge' tanpa basa-basi.
             - **ANDA WAJIB memberikan link download** untuk setiap hasil berkategori [FILE].
             - **DILARANG KERAS** memberikan jawaban tanpa link jika file ditemukan.
             - **DILARANG KERAS MENULIS LINK SECARA MANUAL** di dalam teks jawaban Anda (seperti http://localhost...). Cukup gunakan tool, dan sistem akan menampilkannya secara otomatis.
-            - **ON-DEMAND LEARNING**: Jika user meminta Anda untuk "Membaca", "Menganalisis", "Mempelajari", atau "Meringkas" dokumen, dan dokumen tersebut ditemukan melalui pencarian, Anda **WAJIB LANGSUNG** menggunakan tool 'analyze_dashboard_document' dengan ID file yang sesuai pada giliran yang sama! DILARANG KERAS berhenti untuk meminta izin membaca atau meminta waktu kepada user. Ingat: Anda memproses seketika, jadi panggil tool tersebut berturut-turut tanpa jeda percakapan. Hasil analisis akan otomatis disimpan ke Nayaxa Intelligence.
+            - **ON-DEMAND LEARNING**: Jika user meminta Anda untuk "Membaca", "Menganalisis", "Mempelajari", atau "Meringkas" dokumen yang ditemukan di Dashboard (bukan file yang baru saja diunggah di chat), gunakan tool 'analyze_dashboard_document' dengan ID file yang sesuai. Hasil analisis akan secara otomatis disimpan ke memori jangka panjang Anda (Nayaxa Intelligence) agar hemat token di masa depan.
             - Format Link: [Unduh (Nama File)](URL_DARI_TOOL). Letakkan link ini secara menonjol di bagian ATAS jawaban Anda dengan format tombol Markdown yang jelas.
+            
+            PENGISIAN EXCEL: Jika user mengunggah file Excel (Template) dan meminta Anda untuk "mengisi", "lengkapi", atau "masukkan data" ke dalamnya, gunakan tool 'fill_excel_template'. 
+            TEKNIK PENGISIAN: 
+            - Gunakan key "uraian" atau "label" untuk mencocokkan baris yang ingin diisi. 
+            - Gunakan key lain yang sesuai dengan Nama Header Kolom (misal: "hasil verifikasi", "rekomendasi", "keterangan") untuk mengisi nilainya.
+            - Contoh: [{"uraian": "Lokasi", "rekomendasi": "Masukkan alamat lengkap"}] akan mencari baris yang mengandung kata 'Lokasi' dan mengisi kolom 'REKOMENDASI' di baris tersebut.
+            
+            UPDATE DOCX TABLES: Jika user mengunggah file DOCX dan meminta Anda untuk "memperbarui tabel", "mengganti isian tabel", atau "memasukkan data ke tabel dokumen", ikuti 2 langkah wajib ini:
+            1. Panggil tool 'scan_document_tables' terlebih dahulu untuk memindai ID tabel, nama kolom, dan label baris yang ada di dokumen.
+            2. Setelah menerima hasil scan, panggil tool 'update_document_tables' dengan menyertakan JSON updates_json yang berisi pemetaan data baru ke tabel/baris/kolom yang tepat.
             
             Identitas USER: ${identitasUser}
             PENTING: DILARANG KERAS memunculkan "ID", "NIP", "Profil ID", "Instansi ID", atau angka identitas teknis lainnya (seperti: "ID: 151", "ID: 66", dsb) kecuali user bertanya secara spesifik. 
@@ -669,70 +998,229 @@ ${nayaxaMindService.getNayaxaProtokolPrompt()}
         `;
 
 
-        const maxAttempts = forcePaidKey ? 1 : 2;
+        const maxAttempts = preferredType === 'Gemini Paid' ? 1 : 5; // Increased retry for Free keys to utilize the pool better
         while (attempts < maxAttempts) {
             try {
                 const genAI = new GoogleGenerativeAI(apiKey);
                 const model = genAI.getGenerativeModel({ 
-                    model: DEFAULT_MODEL, 
+                    model: currentModelName, 
                     systemInstruction: systemInstruction, 
-                    tools: nayaxaTools 
+                    tools: nayaxaTools,
+                    safetySettings: safetySettings
                 });
 
                 // Conversion for Gemini history (MUST start with 'user')
-                let history = prevHistory.map(h => ({
-                    role: h.role === 'user' ? 'user' : 'model',
-                    parts: [{ text: (h.parts && h.parts[0] ? h.parts[0].text : (h.content || "")) }]
-                }));
+                let history = prevHistory.map(h => {
+                    const parts = (h.parts || []).map(p => {
+                        if (p.functionCall) {
+                            const newCall = { ...p.functionCall };
+                            delete newCall.thoughtSignature;
+                            delete newCall.thought_signature;
+                            return {
+                                functionCall: newCall,
+                                thoughtSignature: "skip_thought_signature_validator",
+                                thought_signature: "skip_thought_signature_validator"
+                            };
+                        }
+                        return { text: p.text || h.content || "" };
+                    });
+                    if (parts.length === 0) parts.push({ text: h.content || "" });
+                    return {
+                        role: h.role === 'user' ? 'user' : 'model',
+                        parts: parts
+                    };
+                });
                 while (history.length > 0 && history[0].role !== 'user') history.shift();
                 if (history.length > 0) history.pop();
 
-                let userText = userMessage;
-                if (fileContext) userText = `${fileContext}\n\n${userText}`;
-                
-                // --- MULTI-FILE PRE-PROCESSOR ---
-                const parts = [];
+                let localFileContext = '';
                 const attachmentList = Array.isArray(files) ? files : [];
+                
+                // --- MULTI-FILE PRE-PROCESSOR (v4.6.5: Hashing, Caching & Hybrid RAG) ---
+                for (const file of attachmentList) {
+                    const { base64, mimeType } = file;
+                    if (!base64 || !mimeType) continue;
+                    const fileName = file.name || 'file-tanpa-nama';
+
+                    const isExcel = mimeType?.includes('spreadsheetml') || mimeType?.includes('excel') || mimeType?.includes('officedocument.spreadsheetml.sheet');
+                    const isCSV = mimeType?.includes('csv');
+                    const extension = file.name ? file.name.split('.').pop().toLowerCase() : '';
+                    
+                    const isDoc = isExcel || isCSV || extension === 'xlsx' || extension === 'xls' || extension === 'csv' ||
+                                  mimeType?.includes('wordprocessingml') || mimeType?.includes('msword') || extension === 'docx' || extension === 'doc' ||
+                                  mimeType?.includes('pdf') || extension === 'pdf' || extension === 'txt' || mimeType?.includes('text/plain');
+
+                    if (isDoc) {
+                        try {
+                            const cleanB64 = base64.includes('base64,') ? base64.split('base64,')[1] : base64;
+                            const buffer = Buffer.from(cleanB64, 'base64');
+                            const fileHash = crypto.createHash('sha256').update(buffer).digest('hex');
+
+                            console.log(`[Gemini] Processing document "${fileName}" (Hash: ${fileHash}). Checking cache...`);
+                            if (onStepCallback) onStepCallback({ icon: '🔍', label: `Memverifikasi sidik jari dokumen: ${fileName}...` });
+
+                            const [cachedRows] = await dbNayaxa.query(
+                                'SELECT extracted_text, master_summary FROM nayaxa_file_cache WHERE file_hash = ? LIMIT 1',
+                                [fileHash]
+                            );
+
+                            let extractedText = '';
+                            let cachedSummary = null;
+                            let isCacheHit = false;
+
+                            if (cachedRows.length > 0) {
+                                extractedText = cachedRows[0].extracted_text || '';
+                                cachedSummary = cachedRows[0].master_summary;
+                                isCacheHit = true;
+                                console.log(`[Gemini] Cache HIT for "${fileName}" (${fileHash})!`);
+                                if (onStepCallback) onStepCallback({ icon: '⚡', label: `Dokumen terdeteksi! Memuat instan dari cache lokal...` });
+                            } else {
+                                console.log(`[Gemini] Cache MISS for "${fileName}". Parsing file physically...`);
+                                if (onStepCallback) onStepCallback({ icon: '📂', label: `Mengekstrak berkas baru: ${fileName}...` });
+
+                                if (isExcel || isCSV || extension === 'xlsx' || extension === 'xls' || extension === 'csv') {
+                                    if (onStepCallback) onStepCallback({ icon: '📊', label: `Membaca lembar kerja Excel...` });
+                                    const workbook = XLSX.read(buffer, { type: 'buffer' });
+                                    workbook.SheetNames.forEach(sheetName => {
+                                        const sheet = workbook.Sheets[sheetName];
+                                        const csv = XLSX.utils.sheet_to_csv(sheet);
+                                        extractedText += `\n--- Sheet: ${sheetName} ---\n${csv}\n`;
+                                    });
+                                } else if (extension === 'txt' || mimeType?.includes('text/plain')) {
+                                    if (onStepCallback) onStepCallback({ icon: '📄', label: `Membaca berkas teks murni...` });
+                                    extractedText = buffer.toString('utf8');
+                                } else if (mimeType?.includes('wordprocessingml') || mimeType?.includes('msword') || extension === 'docx' || extension === 'doc') {
+                                    if (onStepCallback) onStepCallback({ icon: '📝', label: `Membaca dokumen Word...` });
+                                    const wordResult = await mammoth.convertToHtml({ buffer });
+                                    extractedText = wordResult.value.replace(/<img[^>]*>/g, '[Gambar]');
+                                } else if (mimeType?.includes('pdf') || extension === 'pdf') {
+                                    if (onStepCallback) onStepCallback({ icon: '📄', label: `Membaca dokumen PDF...` });
+                                    const pdfParser = typeof pdf === 'function' ? pdf : pdf.default;
+                                    if (!pdfParser) throw new Error('Library pdf-parse tidak ditemukan.');
+                                    const pdfData = await pdfParser(buffer);
+                                    extractedText = pdfData.text?.trim() || '';
+                                }
+                            }
+
+                            // --- SMART DETECTOR FOR VISION FALLBACK (v4.8.0) ---
+                            const isPDF = mimeType?.includes('pdf') || extension === 'pdf';
+                            if (isPDF) {
+                                const isDetailedQuery = /jelaskan|analisis|detil|detail|daftar|apa saja|inovasi|isi|ringkas|rangkum|pembedahan/i.test(userMessage);
+                                const textLength = extractedText.trim().length;
+                                let triggerVision = false;
+
+                                if (textLength < 100) {
+                                    // 1. Teks sangat pendek (< 100 karakter) -> Pasti scan/gambar -> Langsung Vision Fallback!
+                                    triggerVision = true;
+                                    console.warn(`[Gemini] PDF '${fileName}' memiliki teks sangat pendek (${textLength} karakter). Menggunakan native vision fallback.`);
+                                } else if (textLength < 500 && isDetailedQuery) {
+                                    // 2. Teks pendek (< 500 karakter) tapi user meminta penjelasan detil/analisis -> Judul/Metadata saja -> Gunakan Vision Fallback!
+                                    triggerVision = true;
+                                    console.warn(`[Gemini] PDF '${fileName}' memiliki teks terbatas (${textLength} karakter) dan tidak sesuai kueri analisis pengguna. Menggunakan native vision fallback.`);
+                                }
+
+                                if (triggerVision) {
+                                    // if (onStepCallback) onStepCallback({ icon: '👁️', label: `Mengaktifkan Gemini Vision untuk analisis visual mendalam...` });
+                                    file._useVisionFallback = true;
+                                    localFileContext = (localFileContext ? localFileContext + '\n\n' : '') +
+                                        `[PERINGATAN: File "${fileName}" adalah PDF berbasis gambar/scan. ` +
+                                        `Isi dokumen sedang diproses langsung melalui kemampuan visual Gemini (native vision). ` +
+                                        `Bacalah konten visualnya secara langsung dari lampiran dan jawab pertanyaan pengguna berdasarkan apa yang Anda lihat di dalamnya.]`;
+                                    continue; // Lewati seluruh pipeline pemotongan teks murni
+                                }
+                            }
+
+                            // Simpan ke Cache dan Chunks jika Cache MISS dan teksnya panjang & valid
+                            if (!isCacheHit && extractedText.trim().length > 0) {
+                                await dbNayaxa.query(
+                                    'INSERT IGNORE INTO nayaxa_file_cache (file_hash, file_name, extracted_text) VALUES (?, ?, ?)',
+                                    [fileHash, fileName, extractedText]
+                                );
+
+                                const chunks = chunkDocument(extractedText, 1200, 250);
+                                for (let j = 0; j < chunks.length; j++) {
+                                    await dbNayaxa.query(
+                                        'INSERT INTO nayaxa_file_chunks (file_hash, chunk_index, chunk_content) VALUES (?, ?, ?)',
+                                        [fileHash, j, chunks[j]]
+                                    );
+                                }
+
+                                if (onStepCallback) onStepCallback({ icon: '⚙️', label: `Memulai pembuatan Ringkasan Induk di latar belakang...` });
+                                generateMasterSummaryInBackground(fileHash, fileName, extractedText, apiKey);
+                            }
+
+                            if (onStepCallback) onStepCallback({ icon: '🧠', label: `Menjalankan Hybrid RAG pencarian relevansi...` });
+
+                            if (isSummaryRequest(userMessage)) {
+                                const summaryToUse = cachedSummary || extractedText.substring(0, 15000);
+                                const label = cachedSummary ? 'Menggunakan Ringkasan Induk instan' : 'Mengekstrak porsi utama berkas';
+                                if (onStepCallback) onStepCallback({ icon: '📋', label: `${label}...` });
+
+                                localFileContext = (localFileContext ? localFileContext + '\n\n' : '') + 
+                                    `RINGKASAN INDUK DOKUMEN (NAMA FILE: "${fileName}", HASH: "${fileHash}"):\n${summaryToUse}`;
+                            } else {
+                                const hybridContext = await retrieveHybridContext(fileHash, userMessage, onStepCallback);
+                                localFileContext = (localFileContext ? localFileContext + '\n\n' : '') + 
+                                    `KONTEKS DOKUMEN (NAMA FILE: "${fileName}", HASH: "${fileHash}"):\n${hybridContext}`;
+                            }
+                        } catch (err) {
+                            console.error(`[Gemini] Error processing document ${fileName}:`, err);
+                            if (onStepCallback) onStepCallback({ icon: '❌', label: `Gagal membaca dokumen: ${err.message}` });
+                            localFileContext = (localFileContext ? localFileContext + '\n\n' : '') + 
+                                `DATA FILE (ERROR) - NAMA FILE: "${fileName}":\nGagal memproses file: ${err.message}.`;
+                        }
+                    }
+                }
+
+                const parts = [];
+                let userText = userMessage;
+
+                const combinedFileContext = (fileContext || '') + (localFileContext || '');
+                if (combinedFileContext) {
+                    userText = `[DOKUMEN DIUNGGAH DI CHAT]\nBerikut adalah isi dokumen referensi utama yang baru saja saya unggah di chat ini. Dokumen ini BUKAN dokumen dari Dashboard, melainkan dokumen lokal saya untuk diskusi ini. Baca dan gunakan konten berikut untuk menjawab:\n\n${combinedFileContext}\n\n---\n\nPertanyaan saya:\n${userText}`;
+                }
+
                 for (const file of attachmentList) {
                     const { base64, mimeType } = file;
                     if (!base64 || !mimeType) continue;
                     const extension = file.name ? file.name.split('.').pop().toLowerCase() : '';
 
-                    if (mimeType?.includes('spreadsheetml') || mimeType?.includes('excel') || extension === 'xlsx' || extension === 'xls' || extension === 'csv') {
-                        try {
-                            const buffer = Buffer.from(base64.split('base64,')[1] || base64, 'base64');
-                            const workbook = XLSX.read(buffer, { type: 'buffer' });
-                            let sheetData = "";
-                            workbook.SheetNames.forEach(sheetName => {
-                                sheetData += `\n--- Sheet: ${sheetName} ---\n${XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName])}\n`;
-                            });
-                            userText += `\n\nDATA FILE (EXCEL/CSV): \n${sheetData}`;
-                        } catch (err) {}
-                    } else if (mimeType?.includes('wordprocessingml') || extension === 'docx' || extension === 'doc') {
-                        try {
-                            const wordResult = await mammoth.convertToHtml({ buffer: Buffer.from(base64.split('base64,')[1] || base64, 'base64') });
-                            userText += `\n\nDATA FILE (WORD/HTML): \n${wordResult.value.replace(/<img[^>]*>/g, '[Gambar]')}`;
-                        } catch (err) {}
-                    } else {
+                    const isExcel = mimeType?.includes('spreadsheetml') || mimeType?.includes('excel') || mimeType?.includes('officedocument.spreadsheetml.sheet');
+                    const isCSV = mimeType?.includes('csv');
+                    const isPDF = mimeType?.includes('pdf') || extension === 'pdf';
+                    const isDoc = isExcel || isCSV || extension === 'xlsx' || extension === 'xls' || extension === 'csv' ||
+                                  mimeType?.includes('wordprocessingml') || mimeType?.includes('msword') || extension === 'docx' || extension === 'doc' ||
+                                  isPDF || extension === 'txt' || mimeType?.includes('text/plain');
+
+                    // Kirimkan sebagai inlineData jika: (1) bukan dokumen teks (gambar dll), atau
+                    // (2) PDF yang ditandai sebagai scan/gambar (vision fallback)
+                    if (!isDoc || (isPDF && file._useVisionFallback)) {
                         parts.push({
                             inlineData: { mimeType: mimeType, data: base64.split('base64,')[1] || base64 }
                         });
                     }
                 }
+
                 parts.unshift({ text: userText });
+
 
                 const chat = model.startChat({ history: history, generationConfig: { maxOutputTokens: 8192 } });
                 
                 // Use streaming version to show typing effect character-by-character
-                let resultStream = await chat.sendMessageStream(parts);
-                for await (const chunk of resultStream.stream) {
-                    try {
-                        const text = chunk.text();
-                        if (text && onStepCallback) {
-                            onStepCallback({ type: 'message_chunk', text });
-                        }
-                    } catch (e) {}
+                let resultStream = await chat.sendMessageStream(parts, { signal });
+                let responseText = "";
+                try {
+                    for await (const chunk of resultStream.stream) {
+                        const chunkText = chunk.text();
+                        responseText += chunkText;
+                        if (onStepCallback) onStepCallback({ type: 'message_chunk', text: chunkText });
+                    }
+                } catch (streamErr) {
+                    console.error('[Gemini] Stream iteration error:', streamErr.message);
+                    if (!responseText) throw streamErr;
+                    console.warn('[Gemini] Stream interrupted but some content was received.');
                 }
+                
                 let response = await resultStream.response;
                 
                 const generatedChartMarkers = [];
@@ -745,6 +1233,8 @@ ${nayaxaMindService.getNayaxaProtokolPrompt()}
                     for (const call of response.functionCalls()) {
                         const excelFile = attachmentList.find(f => f.mimeType?.includes('excel') || f.mimeType?.includes('spreadsheetml'));
                         const excelBase64 = excelFile ? excelFile.base64 : null;
+                        const docxFile = attachmentList.find(f => f.mimeType?.includes('wordprocessingml') || f.mimeType?.includes('msword') || f.name?.toLowerCase().endsWith('.docx') || f.name?.toLowerCase().endsWith('.doc'));
+                        const docxBase64 = docxFile ? docxFile.base64 : null;
                         
                         // UI Feedback
                         if (onStepCallback) {
@@ -760,7 +1250,7 @@ ${nayaxaMindService.getNayaxaProtokolPrompt()}
                             }
                         }
 
-                        let res = await toolFunctions[call.name]({ ...call.args, instansi_id, month, year }, { baseUrl, excelBase64, app_id: 1 });
+                        let res = await toolFunctions[call.name]({ ...call.args, instansi_id, month, year }, { baseUrl, excelBase64, docxBase64, app_id: 1, session_id, onStepCallback });
                         
                         if (res.success && res.download_url) {
                             const actualFileName = res.download_url.split('/').pop();
@@ -773,7 +1263,21 @@ ${nayaxaMindService.getNayaxaProtokolPrompt()}
                         }
                         callResponses.push({ functionResponse: { name: call.name, response: res } });
                     }
-                    resultStream = await chat.sendMessageStream(callResponses);
+                    if (chat._history && Array.isArray(chat._history)) {
+                        chat._history.forEach(turn => {
+                            if (turn.parts && Array.isArray(turn.parts)) {
+                                turn.parts.forEach(part => {
+                                    if (part.functionCall) {
+                                        delete part.functionCall.thoughtSignature;
+                                        delete part.functionCall.thought_signature;
+                                        part.thoughtSignature = "skip_thought_signature_validator";
+                                        part.thought_signature = "skip_thought_signature_validator";
+                                    }
+                                });
+                            }
+                        });
+                    }
+                    resultStream = await chat.sendMessageStream(callResponses, { signal });
                     for await (const chunk of resultStream.stream) {
                         try {
                             const text = chunk.text();
@@ -809,13 +1313,29 @@ ${nayaxaMindService.getNayaxaProtokolPrompt()}
                 const status = error.status || error.response?.status;
                 
                 if (attempts < maxAttempts) {
-                    console.warn(`[Gemini] Error encountered (Attempt ${attempts}): ${error.message}. Retrying alternate keys...`);
+                    console.warn(`[Gemini] Error encountered (Attempt ${attempts}): ${error.message}. Status: ${status}. Retrying alternate keys...`);
                     
-                    // Upaya kedua: Cari kunci gratisan sehat lainnya di database
-                    apiKey = await getApiKey(apiKey);
+                    // Add a small delay to avoid slamming the next key immediately (esp. if 429)
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+
+                    // Retrying with another key of the same preferred type (if any) or any other healthy key
+                    excludedKeys.push(apiKey);
+                    apiKey = await getApiKey(excludedKeys, preferredType);
                     continue;
                 }
                 
+                console.error(`[Gemini] Final attempt failed. Model: ${currentModelName}, Key: ${apiKey.substring(0, 8)}..., Error: ${error.message}`);
+                
+                // Debug log to database
+                try {
+                    await dbNayaxa.query(
+                        'INSERT INTO nayaxa_mind_logs (task_name, status, message, started_at, finished_at) VALUES (?, ?, ?, NOW(), NOW())',
+                        ['Gemini Error Debug', 'FAILED', `Model: ${currentModelName} | Key: ${apiKey.substring(0, 8)}... | Error: ${error.message}`]
+                    );
+                } catch (logErr) {
+                    console.error('Failed to log error to DB:', logErr.message);
+                }
+
                 if (status) error.status = status;
                 throw error;
             }

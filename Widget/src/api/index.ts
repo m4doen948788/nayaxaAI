@@ -12,6 +12,8 @@ export const createNayaxaApi = (baseUrl: string, apiKey: string) => {
   return {
     getDashboardInsights: (params: { instansi_id?: number, profil_id?: number }) => 
       instance.get('/dashboard-insights', { params }).then(r => r.data),
+    getWidgetPrompts: () => 
+      instance.get('/widget-prompts').then(r => r.data),
     getSessions: (user_id: number) => 
       instance.get('/sessions', { params: { user_id } }).then(r => r.data),
     getHistoryBySession: (sessionId: string) => 
