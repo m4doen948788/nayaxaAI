@@ -315,7 +315,7 @@ export default function Chat() {
                 </div>
                 <div className={`max-w-[75%] p-6 rounded-3xl text-[16px] shadow-sm ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-slate-50 border border-slate-200 rounded-tl-none'}`}>
                   <div className="prose prose-slate max-w-none text-slate-700 leading-relaxed font-normal text-[16px] text-justify prose-p:my-1 prose-headings:mb-2 prose-headings:mt-4">
-                    {(typeof m.content === 'string' ? m.content.replace(/\[FILE:[\s\S]*?ACTION:[\s\S]*?\]/gi, '').trim() || (m.role === 'user' ? '*(Mengirimkan lampiran)*' : '') : m.content || '').split(/(\[NAYAXA_PROPOSAL:[^\]]+\])/g).map((part, index) => {
+                    {(typeof m.content === 'string' ? m.content.replace(/\[FILE:[\s\S]*?ACTION:[\s\S]*?\]/gi, '').trim() || (m.role === 'user' ? '*(Mengirimkan lampiran)*' : '') : m.content || '').split(/(\[NAYAXA_PROPOSAL:[^\]]+\])/g).map((part: string, index: number) => {
                       if (part.startsWith('[NAYAXA_PROPOSAL:')) {
                         const id = part.match(/\[NAYAXA_PROPOSAL:([^\]]+)\]/)?.[1] || '';
                         return <CodeProposalReview key={index} proposalId={id} api={api} />;
