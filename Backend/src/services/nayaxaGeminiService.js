@@ -1277,16 +1277,21 @@ ${nayaxaPromptService.getNayaxaProtokolPrompt()}
                             }
                         });
                     }
-                    resultStream = await chat.sendMessageStream(callResponses, { signal });
-                    for await (const chunk of resultStream.stream) {
-                        try {
-                            const text = chunk.text();
-                            if (text && onStepCallback) {
-                                onStepCallback({ type: 'message_chunk', text });
-                            }
-                        } catch (e) {}
+                    try {
+                        resultStream = await chat.sendMessageStream(callResponses, { signal });
+                        for await (const chunk of resultStream.stream) {
+                            try {
+                                const text = chunk.text();
+                                if (text && onStepCallback) {
+                                    onStepCallback({ type: 'message_chunk', text });
+                                }
+                            } catch (e) {}
+                        }
+                        response = await resultStream.response;
+                    } catch (loopErr) {
+                        console.error('[Gemini] Tool response streaming error:', loopErr.message);
+                        break;
                     }
-                    response = await resultStream.response;
                 }
 
                 let finalResponseText = response.text();
