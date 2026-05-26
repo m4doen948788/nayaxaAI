@@ -38,6 +38,24 @@ const recursiveDataCleaner = (data) => {
     return data;
 };
 
+/**
+ * Sanitize text to remove/replace emojis and characters unsupported by standard PDF fonts (Helvetica)
+ * to prevent PDFKit from throwing a fatal character rendering error.
+ */
+const sanitizeForPDFKit = (text) => {
+    if (!text || typeof text !== 'string') return text || '';
+    return text
+        // Replace common checkmarks and bullet symbols
+        .replace(/[✓✔☑✅]/g, '[v] ')
+        .replace(/[✗✘☒❎]/g, '[x] ')
+        .replace(/[🚀📌⚡💡⭐]/g, '* ')
+        .replace(/[➡➢➤➔]/g, '-> ')
+        // Remove standard emojis and other non-BMP symbols (surrogate pairs)
+        .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '')
+        // Remove any other character outside the standard CP1252 (Helvetica supported) range
+        .replace(/[^\x00-\x7F\x80-\xFF]/g, '');
+};
+
 const exportService = {
     generateExcel: async (data, filename = 'export.xlsx') => {
         console.log(`[EXPORT:EXCEL] Generating ${filename}. Content elements: ${Array.isArray(data) ? data.length : 'N/A'}`);
@@ -111,6 +129,10 @@ const exportService = {
 
                 // Strip bold markers for PDF (PDFKit doesn't support easy inline bold)
                 let cleanLine = line.replace(/\*\*/g, '').replace(/__/g, '').replace(/`/g, '');
+
+                // Sanitize for PDFKit to prevent character encoding/font crashes
+                cleanLine = sanitizeForPDFKit(cleanLine);
+                if (!cleanLine.trim()) continue;
 
                 // Smart Heading Detection
                 if (cleanLine.startsWith('# ')) {
