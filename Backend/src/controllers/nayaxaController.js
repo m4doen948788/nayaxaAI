@@ -35,6 +35,32 @@ const releaseRequest = () => {
     processQueue();
 };
 
+/**
+ * Builds a safe, publicly accessible export download URL.
+ * Priority:
+ *   1. NAYAXA_PUBLIC_URL env var (set by admin in .env on server)
+ *   2. Fallback from request headers — always uses HTTP to avoid SSL errors on bare port
+ *
+ * NAYAXA_PUBLIC_URL should be the ROOT domain/path WITHOUT a trailing /export segment.
+ * e.g. "https://bapperida-ppm.my.id" or "https://bapperida-ppm.my.id/api/nayaxa"
+ */
+const buildExportDownloadUrl = (req, downloadPath) => {
+    let base = process.env.NAYAXA_PUBLIC_URL;
+
+    if (!base) {
+        // Fallback: always use HTTP for direct-port access (avoids SSL errors on port 6001)
+        const host = req.get('x-forwarded-host') || req.get('host');
+        const proto = req.get('x-forwarded-proto') || 'http';
+        base = `${proto}://${host}`;
+    }
+
+    // Strip trailing slash from base
+    base = base.replace(/\/$/, '');
+
+    // downloadPath starts with /export/... — just append directly
+    return `${base}${downloadPath}`;
+};
+
 const nayaxaController = {
     /**
      * Get Widget Prompts
@@ -188,9 +214,7 @@ const nayaxaController = {
                 hour: '2-digit', minute: '2-digit', hour12: false
             }) + ' WIB';
 
-            const protocol = req.get('x-forwarded-proto') || req.protocol;
-            const host = req.get('x-forwarded-host') || req.get('host');
-            const baseUrl = process.env.NAYAXA_PUBLIC_URL || `${protocol}://${host}`;
+            const baseUrl = buildExportDownloadUrl(req, '');
 
             const [nama_instansi, userProfile, personaText, activity] = await Promise.all([
                 nayaxaStandalone.getInstansiName(instansi_id),
@@ -313,9 +337,7 @@ const nayaxaController = {
                 hour12: false
             }) + ' WIB';
 
-            const protocol = req.get('x-forwarded-proto') || req.protocol;
-            const host = req.get('x-forwarded-host') || req.get('host');
-            const baseUrl = process.env.NAYAXA_PUBLIC_URL || `${protocol}://${host}`;
+            const baseUrl = buildExportDownloadUrl(req, '');
 
             const [nama_instansi, userProfile, personaText, activity] = await Promise.all([
                 nayaxaStandalone.getInstansiName(instansi_id),
@@ -605,11 +627,8 @@ const nayaxaController = {
             const fullContent = messages.join('\n\n');
             const downloadPath = await exportService.generateWord(fullContent, filename || 'Pilihan_Obrolan.docx');
             
-            const protocol = req.get('x-forwarded-proto') || req.protocol;
-            const host = req.get('x-forwarded-host') || req.get('host');
-            const baseUrl = process.env.NAYAXA_PUBLIC_URL || `${protocol}://${host}`;
-            
-            res.json({ success: true, download_url: `${baseUrl}${downloadPath}` });
+            const downloadUrl = buildExportDownloadUrl(req, downloadPath);
+            res.json({ success: true, download_url: downloadUrl });
         } catch (error) {
             console.error('Export Selected Messages Error:', error);
             res.status(500).json({ success: false, message: error.message });

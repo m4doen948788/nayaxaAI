@@ -132,6 +132,35 @@ if [ -d "$NAYAXA_DIR" ]; then
         print_ok "Build nayaxa widget selesai"
     fi
 
+    # ── Cek .env NAYAXA_PUBLIC_URL (kritis untuk link download PDF/Word) ──
+    print_step "NAYAXA - Verifikasi konfigurasi .env"
+    NAYAXA_ENV_FILE="$NAYAXA_DIR/Backend/.env"
+    if [ ! -f "$NAYAXA_ENV_FILE" ]; then
+        print_warn "File .env tidak ditemukan di $NAYAXA_ENV_FILE!"
+        print_warn "Membuat .env dari template default..."
+        cat > "$NAYAXA_ENV_FILE" << 'EOF'
+# ========================================
+# KONFIGURASI NAYAXA ENGINE - SERVER
+# ========================================
+# WAJIB: URL publik yang bisa diakses browser untuk link download PDF/Word
+# Tanpa ini, link download akan rusak (SSL error / connection reset)
+NAYAXA_PUBLIC_URL=https://bapperida-ppm.my.id/api/nayaxa
+
+PORT=6001
+EOF
+        print_warn "File .env dibuat. Silakan edit $NAYAXA_ENV_FILE untuk mengisi kredensial database!"
+    else
+        # Pastikan NAYAXA_PUBLIC_URL sudah ada di .env
+        if ! grep -q "NAYAXA_PUBLIC_URL" "$NAYAXA_ENV_FILE"; then
+            print_warn "NAYAXA_PUBLIC_URL tidak ditemukan di .env — Menambahkannya..."
+            echo "NAYAXA_PUBLIC_URL=https://bapperida-ppm.my.id/api/nayaxa" >> "$NAYAXA_ENV_FILE"
+            print_ok "NAYAXA_PUBLIC_URL ditambahkan ke .env"
+        else
+            CURRENT_URL=$(grep "NAYAXA_PUBLIC_URL" "$NAYAXA_ENV_FILE" | cut -d'=' -f2)
+            print_ok "NAYAXA_PUBLIC_URL terdeteksi: $CURRENT_URL"
+        fi
+    fi
+
     print_step "NAYAXA - Restart PM2"
     if pm2 describe "$PM2_NAYAXA_NAME" > /dev/null 2>&1; then
         pm2 restart "$PM2_NAYAXA_NAME" --update-env
