@@ -132,12 +132,15 @@ export default function NayaxaAssistant({
     const fixLocalhostLinks = (text: string) => {
       if (!text || window.location.hostname === 'localhost') return text;
       
+      let cleaned = text;
       // Ganti semua yang pakai localhost atau domain:6001 menjadi subdomain resmi
-      // Regex ini menangkap http://localhost:PORT, https://localhost:PORT, localhost:PORT, dll
-      let cleaned = text.replace(/(https?:\/\/)?localhost(:\d+)?/g, 'https://api-nayaxa.bapperida-ppm.my.id');
+      cleaned = cleaned.replace(/(https?:\/\/)?localhost(:\d+)?/g, 'https://api-nayaxa.bapperida-ppm.my.id');
       
       // Juga tangkap jika ada IP 127.0.0.1
       cleaned = cleaned.replace(/(https?:\/\/)?127\.0\.0\.1(:\d+)?/g, 'https://api-nayaxa.bapperida-ppm.my.id');
+      
+      // Ganti bapperida-ppm.my.id:6001 dengan subdomain resmi untuk mencegah SSL error
+      cleaned = cleaned.replace(/(https?:\/\/)?bapperida-ppm\.my\.id:6001/g, 'https://api-nayaxa.bapperida-ppm.my.id');
       
       return cleaned;
     };

@@ -47,9 +47,15 @@ const releaseRequest = () => {
 const buildExportDownloadUrl = (req, downloadPath) => {
     let base = process.env.NAYAXA_PUBLIC_URL;
 
+    // Smart sensing fallback for production to prevent ERR_SSL_PROTOCOL_ERROR
+    const host = (req.get('x-forwarded-host') || req.get('host') || '').toLowerCase();
+    
+    if (host.includes('bapperida-ppm.my.id')) {
+        // Force the official secure API subdomain in production
+        base = 'https://api-nayaxa.bapperida-ppm.my.id';
+    }
+
     if (!base) {
-        // Fallback: always use HTTP for direct-port access (avoids SSL errors on port 6001)
-        const host = req.get('x-forwarded-host') || req.get('host');
         const proto = req.get('x-forwarded-proto') || 'http';
         base = `${proto}://${host}`;
     }
