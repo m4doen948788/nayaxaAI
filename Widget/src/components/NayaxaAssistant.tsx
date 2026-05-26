@@ -6,6 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Mermaid from '@/src/components/Mermaid';
 import { Send, Bot, User, Zap, X, ChevronDown, Paperclip, FileText, Image as ImageIcon } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 interface NayaxaAssistantProps {
   baseUrl?: string;
@@ -45,6 +46,53 @@ export default function NayaxaAssistant({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [widgetPrompts, setWidgetPrompts] = useState<{ label: string, prompt: string }[]>([]);
+
+  // Excel Preview States
+  const [excelPreviewOpen, setExcelPreviewOpen] = useState(false);
+  const [excelPreviewLoading, setExcelPreviewLoading] = useState(false);
+  const [excelPreviewFilename, setExcelPreviewFilename] = useState('');
+  const [excelPreviewUrl, setExcelPreviewUrl] = useState('');
+  const [previewExcelSheets, setPreviewExcelSheets] = useState<string[]>([]);
+  const [activeSheetName, setActiveSheetName] = useState('');
+  const [previewExcelData, setPreviewExcelData] = useState<any[]>([]);
+  const workbookRef = useRef<any>(null);
+
+  const handleExcelPreview = async (url: string) => {
+    setExcelPreviewFilename(url.split('/').pop()?.split('?')[0] || 'Laporan.xlsx');
+    setExcelPreviewUrl(url);
+    setExcelPreviewOpen(true);
+    setExcelPreviewLoading(true);
+    
+    try {
+      const response = await fetch(url);
+      const arrayBuffer = await response.arrayBuffer();
+      const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
+      workbookRef.current = workbook;
+      
+      setPreviewExcelSheets(workbook.SheetNames);
+      const firstSheet = workbook.SheetNames[0];
+      setActiveSheetName(firstSheet);
+      
+      const worksheet = workbook.Sheets[firstSheet];
+      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+      setPreviewExcelData(jsonData);
+      
+      setExcelPreviewLoading(false);
+    } catch (err) {
+      console.error("Gagal memuat preview Excel:", err);
+      setExcelPreviewLoading(false);
+      // Fallback: download directly
+      window.open(url, '_blank');
+    }
+  };
+
+  const handleSheetChange = (sheetName: string) => {
+    if (!workbookRef.current) return;
+    setActiveSheetName(sheetName);
+    const worksheet = workbookRef.current.Sheets[sheetName];
+    const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+    setPreviewExcelData(jsonData);
+  };
 
   useEffect(() => {
     api.getWidgetPrompts().then(res => {
@@ -247,7 +295,34 @@ export default function NayaxaAssistant({
               )}
 
               <div className="prose prose-sm prose-slate max-w-none prose-p:my-1 prose-headings:mb-2">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{typeof m.content === 'string' ? m.content.replace(/\[FILE:[\s\S]*?ACTION:[\s\S]*?\]/gi, '').trim() || (m.role === 'user' ? '*(Mengirimkan lampiran)*' : '') : m.content || ''}</ReactMarkdown>
+                <ReactMarkdown 
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    a: ({ href, children }) => {
+                      if (href && (href.toLowerCase().endsWith('.xlsx') || href.toLowerCase().includes('/export/'))) {
+                        return (
+                          <a 
+                            href={href} 
+                            onClick={(e) => { 
+                              e.preventDefault(); 
+                              handleExcelPreview(href); 
+                            }}
+                            className="text-emerald-600 hover:text-emerald-700 underline font-bold inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            {children} 📊
+                          </a>
+                        );
+                      }
+                      return (
+                        <a href={href} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-700 underline font-semibold">
+                          {children}
+                        </a>
+                      );
+                    }
+                  }}
+                >
+                  {typeof m.content === 'string' ? m.content.replace(/\[FILE:[\s\S]*?ACTION:[\s\S]*?\]/gi, '').trim() || (m.role === 'user' ? '*(Mengirimkan lampiran)*' : '') : m.content || ''}
+                </ReactMarkdown>
               </div>
             </div>
             {m.role === 'model' && m.brain_used && (
@@ -333,7 +408,34 @@ export default function NayaxaAssistant({
                 </div>
 
                 <div className="prose prose-sm prose-slate prose-p:my-1 prose-headings:mb-2 leading-relaxed text-slate-700">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{currentResponse + '█'}</ReactMarkdown>
+                    <ReactMarkdown 
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        a: ({ href, children }) => {
+                          if (href && (href.toLowerCase().endsWith('.xlsx') || href.toLowerCase().includes('/export/'))) {
+                            return (
+                              <a 
+                                href={href} 
+                                onClick={(e) => { 
+                                  e.preventDefault(); 
+                                  handleExcelPreview(href); 
+                                }}
+                                className="text-emerald-600 hover:text-emerald-700 underline font-bold inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                {children} 📊
+                              </a>
+                            );
+                          }
+                          return (
+                            <a href={href} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-700 underline font-semibold">
+                              {children}
+                            </a>
+                          );
+                        }
+                      }}
+                    >
+                      {currentResponse + '█'}
+                    </ReactMarkdown>
                 </div>
             </div>
           </div>
@@ -440,6 +542,120 @@ export default function NayaxaAssistant({
           <Send size={18} />
         </motion.button>
       </div>
+
+      {/* Beautiful Excel Preview Modal */}
+      <AnimatePresence>
+        {excelPreviewOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          >
+            <motion.div 
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-4xl h-[80vh] rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col"
+            >
+              {/* Modal Header */}
+              <div className="bg-gradient-to-r from-emerald-600 to-teal-700 px-6 py-4 text-white flex items-center justify-between shadow-md">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-white/20 rounded-xl backdrop-blur-md">
+                    <FileText size={20} className="text-white" />
+                  </div>
+                  <div className="flex flex-col">
+                    <h3 className="font-bold text-sm leading-tight truncate max-w-md">{excelPreviewFilename}</h3>
+                    <span className="text-[10px] text-white/70 font-semibold tracking-wide">PRATINJAU SPREADSHEET</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <a 
+                    href={excelPreviewUrl} 
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 bg-white/20 hover:bg-white/30 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
+                  >
+                    Unduh File
+                  </a>
+                  <button 
+                    onClick={() => { setExcelPreviewOpen(false); workbookRef.current = null; }}
+                    className="p-1.5 hover:bg-white/20 rounded-lg text-white transition-all"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Tab Sheets Selector */}
+              {previewExcelSheets.length > 1 && (
+                <div className="bg-slate-50 border-b border-slate-200 px-6 py-2 flex gap-2 overflow-x-auto">
+                  {previewExcelSheets.map((sheet, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleSheetChange(sheet)}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all border ${
+                        activeSheetName === sheet 
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700 shadow-sm' 
+                        : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                      }`}
+                    >
+                      {sheet}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Content Area */}
+              <div className="flex-1 overflow-auto p-6 bg-slate-50">
+                {excelPreviewLoading ? (
+                  <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-400">
+                    <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                    <span className="text-xs font-bold tracking-wider animate-pulse">MEMBACA DATA SPREADSHEET...</span>
+                  </div>
+                ) : previewExcelData.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-40">
+                    <FileText size={48} className="text-slate-400 mb-3" />
+                    <h4 className="text-sm font-bold text-slate-800">Spreadsheet Kosong</h4>
+                    <p className="text-[11px] text-slate-500 mt-1">Tidak ada baris data yang terdeteksi di sheet ini.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto border border-slate-200 rounded-2xl bg-white shadow-sm">
+                    <table className="w-full text-xs text-left border-collapse">
+                      <tbody>
+                        {previewExcelData.map((row: any[], rowIdx: number) => (
+                          <tr 
+                            key={rowIdx} 
+                            className={`${
+                              rowIdx === 0 
+                              ? 'bg-slate-100 font-bold border-b border-slate-200 text-slate-700 sticky top-0 z-10' 
+                              : 'border-b border-slate-100 hover:bg-slate-50/50 text-slate-600'
+                            }`}
+                          >
+                            {/* Row Index Indicator */}
+                            <td className="bg-slate-50/80 text-slate-400 font-mono font-medium text-center border-r border-slate-200 w-10 py-2.5">
+                              {rowIdx + 1}
+                            </td>
+                            {row.map((cell: any, cellIdx: number) => (
+                              <td 
+                                key={cellIdx} 
+                                className="px-4 py-2.5 border-r border-slate-100 max-w-xs truncate"
+                                title={cell?.toString() || ''}
+                              >
+                                {cell?.toString() || ''}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   </div>
   );
