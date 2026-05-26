@@ -45,13 +45,14 @@ const releaseRequest = () => {
  * e.g. "https://bapperida-ppm.my.id" or "https://bapperida-ppm.my.id/api/nayaxa"
  */
 const buildExportDownloadUrl = (req, downloadPath) => {
-    let base = process.env.NAYAXA_PUBLIC_URL;
+    let base = process.env.NAYAXA_PUBLIC_URL || '';
 
     // Smart sensing fallback for production to prevent ERR_SSL_PROTOCOL_ERROR
     const host = (req.get('x-forwarded-host') || req.get('host') || '').toLowerCase();
     
-    if (host.includes('bapperida-ppm.my.id')) {
-        // Force the official secure API subdomain in production
+    // If either incoming host header OR loaded NAYAXA_PUBLIC_URL env var contains the production domain,
+    // force rewrite base to the official secure SSL subdomain in production.
+    if (host.includes('bapperida-ppm.my.id') || base.includes('bapperida-ppm.my.id')) {
         base = 'https://api-nayaxa.bapperida-ppm.my.id';
     }
 
