@@ -703,6 +703,7 @@ ${dynamicGlossary}`;
             const scrapeGoogle = async (searchQuery) => {
                 if (isBlocked) return;
                 try {
+                    console.log(`[Nayaxa Debug] scrapeGoogle start for query: ${searchQuery}`);
                     const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}&hl=id&gl=id`;
                     const gRes = await axios.get(googleUrl, { headers: commonHeaders, timeout: 8000 });
                     if (gRes.data.includes('detected unusual traffic') || gRes.data.includes('captcha')) {
@@ -720,7 +721,9 @@ ${dynamicGlossary}`;
                             results.push({ source: 'Google', title: title.trim(), snippet: snippet.trim() || '...', link });
                         }
                     });
+                    console.log(`[Nayaxa Debug] scrapeGoogle finished. Google results added.`);
                 } catch (err) { 
+                    console.warn(`[Nayaxa Debug] scrapeGoogle error: ${err.message}`);
                     if (err.response?.status === 429) {
                         console.log('[Nayaxa] Google Block Detected (429).');
                         isBlocked = true;
@@ -730,6 +733,7 @@ ${dynamicGlossary}`;
 
             const scrapeBing = async (searchQuery) => {
                 try {
+                    console.log(`[Nayaxa Debug] scrapeBing start for query: ${searchQuery}`);
                     const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(searchQuery)}&setlang=id`;
                     const response = await axios.get(searchUrl, { headers: commonHeaders, timeout: 8000 });
                     const $ = cheerio.load(response.data);
@@ -741,7 +745,8 @@ ${dynamicGlossary}`;
                             results.push({ source: 'Bing', title: title.trim(), snippet: snippet.trim() || '...', link });
                         }
                     });
-                } catch (err) { console.error('[Nayaxa] Bing Scrape Error:', err.message); }
+                    console.log(`[Nayaxa Debug] scrapeBing finished. Bing results added.`);
+                } catch (err) { console.error('[Nayaxa Debug] scrapeBing error:', err.message); }
             };
 
             // WATERFALL API HELPER (Fully Sanitized & Defensive)
@@ -751,43 +756,66 @@ ${dynamicGlossary}`;
                 
                 // 1. Serper.dev
                 if (process.env.SERPER_API_KEY) {
+                    console.log(`[Nayaxa Debug] Serper API Key detected, queueing Serper task.`);
                     apiTasks.push(axios.post('https://google.serper.dev/search', { q: searchQuery, gl: "id", hl: "id" }, {
                         headers: { 'X-API-KEY': process.env.SERPER_API_KEY, 'Content-Type': 'application/json' },
                         timeout: 5000
-                    }).then(res => res.data?.organic?.slice(0, limit).map(r => ({
-                        source: 'Google (Serper)',
-                        title: (r.title || '').trim(),
-                        snippet: (r.snippet || '').trim() || '...',
-                        link: r.link || ''
-                    })).filter(item => item.link && item.title) || []).catch(() => []));
+                    }).then(res => {
+                        console.log(`[Nayaxa Debug] Serper API response received. Results count: ${res.data?.organic?.length || 0}`);
+                        return res.data?.organic?.slice(0, limit).map(r => ({
+                            source: 'Google (Serper)',
+                            title: (r.title || '').trim(),
+                            snippet: (r.snippet || '').trim() || '...',
+                            link: r.link || ''
+                        })).filter(item => item.link && item.title) || [];
+                    }).catch((err) => {
+                        console.warn(`[Nayaxa Debug] Serper API error caught: ${err.message}`);
+                        return [];
+                    }));
                 }
 
                 // 2. Tavily
                 if (process.env.TAVILY_API_KEY) {
+                    console.log(`[Nayaxa Debug] Tavily API Key detected, queueing Tavily task.`);
                     apiTasks.push(axios.post('https://api.tavily.com/search', { api_key: process.env.TAVILY_API_KEY, query: searchQuery, max_results: limit }, { timeout: 5000 })
-                        .then(res => res.data?.results?.map(r => ({
-                            source: 'Tavily (AI)',
-                            title: (r.title || '').trim(),
-                            snippet: (r.content || '').trim() || '...',
-                            link: r.url || ''
-                        })).filter(item => item.link && item.title) || []).catch(() => []));
+                        .then(res => {
+                            console.log(`[Nayaxa Debug] Tavily API response received. Results count: ${res.data?.results?.length || 0}`);
+                            return res.data?.results?.map(r => ({
+                                source: 'Tavily (AI)',
+                                title: (r.title || '').trim(),
+                                snippet: (r.content || '').trim() || '...',
+                                link: r.url || ''
+                            })).filter(item => item.link && item.title) || [];
+                        }).catch((err) => {
+                            console.warn(`[Nayaxa Debug] Tavily API error caught: ${err.message}`);
+                            return [];
+                        }));
                 }
 
                 // 3. Brave Search
                 if (process.env.BRAVE_SEARCH_API_KEY) {
+                    console.log(`[Nayaxa Debug] Brave Search API Key detected, queueing Brave Search task.`);
                     apiTasks.push(axios.get('https://api.search.brave.com/res/v1/web/search', {
                         params: { q: searchQuery, count: limit },
                         headers: { 'X-Subscription-Token': process.env.BRAVE_SEARCH_API_KEY, 'Accept': 'application/json' },
                         timeout: 5000
-                    }).then(res => res.data?.web?.results?.slice(0, limit).map(r => ({
-                        source: 'Brave Search',
-                        title: (r.title || '').trim(),
-                        snippet: (r.description || '').trim() || '...',
-                        link: r.url || ''
-                    })).filter(item => item.link && item.title) || []).catch(() => []));
+                    }).then(res => {
+                        console.log(`[Nayaxa Debug] Brave Search API response received.`);
+                        return res.data?.web?.results?.slice(0, limit).map(r => ({
+                            source: 'Brave Search',
+                            title: (r.title || '').trim(),
+                            snippet: (r.description || '').trim() || '...',
+                            link: r.url || ''
+                        })).filter(item => item.link && item.title) || [];
+                    }).catch((err) => {
+                        console.warn(`[Nayaxa Debug] Brave Search API error caught: ${err.message}`);
+                        return [];
+                    }));
                 }
 
+                console.log(`[Nayaxa Debug] Performing Promise.all for ${apiTasks.length} API tasks.`);
                 const allResults = await Promise.all(apiTasks);
+                console.log(`[Nayaxa Debug] All APIs Promise.all resolved.`);
                 return allResults.flat();
             };
 
@@ -841,17 +869,22 @@ ${dynamicGlossary}`;
 
             if (hasAnyAPI) {
                 mainTasks.push(searchViaAPIs(searchQ, apiLimit).then(res => results.push(...res)));
+            } else {
+                console.log(`[Nayaxa Debug] No search APIs configured in environment variables.`);
             }
 
             // Wikipedia Task (Sanitized against empty/null fields)
+            console.log(`[Nayaxa Debug] Queueing Wikipedia task.`);
             mainTasks.push((async () => {
                 try {
                     const wikiQ = isHeavyQuery ? queriesToTry[0] : cleanQuery;
+                    console.log(`[Nayaxa Debug] Wikipedia API request starting for: ${wikiQ}`);
                     const wikiRes = await axios.get(`https://id.wikipedia.org/w/api.php`, {
                         params: { action: 'query', format: 'json', list: 'search', srsearch: wikiQ, srlimit: 2 },
                         headers: { 'User-Agent': 'NayaxaBot/1.1' },
                         timeout: 3000
                     });
+                    console.log(`[Nayaxa Debug] Wikipedia API response received.`);
                     if (wikiRes.data?.query?.search) {
                         wikiRes.data.query.search.forEach(s => {
                             const title = (s.title || '').trim();
@@ -862,18 +895,25 @@ ${dynamicGlossary}`;
                             }
                         });
                     }
-                } catch (err) {}
+                } catch (err) {
+                    console.warn(`[Nayaxa Debug] Wikipedia API error caught: ${err.message}`);
+                }
             })());
 
+            console.log(`[Nayaxa Debug] Awaiting Promise.all for mainTasks.`);
             await Promise.all(mainTasks);
+            console.log(`[Nayaxa Debug] mainTasks resolved successfully. Results collected so far: ${results.length}`);
             
             // 3. Fallback to Native Scrapers ONLY if results are still very few
             if (results.length < 3) {
                 console.log(`[Nayaxa] Fast hits too low (${results.length}), trying Native Scrapers...`);
+                console.log(`[Nayaxa Debug] Triggering Native Scrapers (Google & Bing in parallel).`);
                 await Promise.all([scrapeGoogle(cleanQuery), scrapeBing(queriesToTry[1] || cleanQuery)]);
+                console.log(`[Nayaxa Debug] Native Scrapers resolved. Current results count: ${results.length}`);
             }
 
             // SCORING & FILTERING
+            console.log(`[Nayaxa Debug] Commencing scoring & filtering for ${results.length} collected items.`);
             const TRUSTED_DOMAINS = [
                 // Science & Research (Global & National)
                 { pattern: /nature\.com|science\.org|sciencemag\.org|nasa\.gov|esa\.int|pubmed\.ncbi\.nlm\.nih\.gov|sciencedirect\.com|arxiv\.org|jstor\.org|cell\.com|thelancet\.com|pnas\.org|nejm\.org|scholar\.google\.com|researchgate\.net|brin\.go\.id|sinta\.kemdikbud\.go\.id|garuda\.kemdikbud\.go\.id|lipi\.go\.id|ristekdikti\.go\.id|\.edu|\.ac\.id/, score: 150, type: 'RESEARCH' },
@@ -953,10 +993,12 @@ ${dynamicGlossary}`;
                 }
             }
             finalResults.sort((a, b) => b.totalScore - a.totalScore);
+            console.log(`[Nayaxa Debug] Scoring completed. Final sorted candidate results: ${finalResults.length}`);
 
             const validateLink = async (result) => {
                 if (!result || !result.link) return null;
                 try {
+                    console.log(`[Nayaxa Debug] validateLink starting HEAD request for: ${result.link}`);
                     // Fast HEAD check for 404s
                     const res = await axios.head(result.link, { 
                         headers: commonHeaders, 
@@ -964,8 +1006,10 @@ ${dynamicGlossary}`;
                         maxRedirects: 3,
                         validateStatus: (status) => status < 400 || status === 403 // Discard 404+
                     });
+                    console.log(`[Nayaxa Debug] validateLink HEAD succeeded for: ${result.link}`);
                     return result;
                 } catch (err) {
+                    console.warn(`[Nayaxa Debug] validateLink failed/warning for ${result.link}: ${err.message}`);
                     if (err.response?.status === 404) {
                         console.warn(`[Nayaxa] Filtering Dead Link (404): ${result.link}`);
                         return null;
@@ -976,16 +1020,19 @@ ${dynamicGlossary}`;
                 }
             };
 
+            console.log(`[Nayaxa Debug] Queueing HEAD link validations for top 10 candidates.`);
             const candidateResults = finalResults.slice(0, 10);
             const validatedResults = await Promise.allSettled(candidateResults.map(r => validateLink(r)));
             const activeResults = validatedResults
                 .filter(res => res.status === 'fulfilled' && res.value !== null)
                 .map(res => res.value);
+            console.log(`[Nayaxa Debug] Link validation completed. Validated active results: ${activeResults.length}`);
 
             const searchDate = new Date().toLocaleString('id-ID', { 
                 weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', 
                 hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short' 
             });
+            console.log(`[Nayaxa Debug] searchInternet returning activeResults: ${activeResults.length}`);
             return activeResults.length > 0 ? {
                 success: true,
                 query,
