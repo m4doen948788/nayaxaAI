@@ -141,7 +141,7 @@ const nayaxaTools = [{
                 type: "object",
                 properties: {
                     format: { type: "string", description: "pdf, excel, atau word" },
-                    content: { type: "string", description: "Konten file" },
+                    content: { type: "string", description: "Konten file. KHUSUS untuk format 'excel', content HARUS berupa stringified JSON Array of Objects berisi baris data tabel, contoh: '[{\"KATEGORI\":\"A\",\"NILAI\":100}]'. JANGAN mengirimkan format Markdown, CSV, atau teks biasa jika memilih format 'excel'." },
                     filename: { type: "string", description: "Nama file" },
                     options: { 
                         type: "object", 

@@ -62,13 +62,69 @@ const exportService = {
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet('Nayaxa Export');
         if (typeof data === 'string') {
+            const cleanData = data.replace(/^```(json|csv|tsv|text)?\n?/, '').replace(/\n?```$/, '').trim();
             try {
-                // Strip markdown code blocks if any
-                const cleanData = data.replace(/^```(json)?\n?/, '').replace(/\n?```$/, '').trim();
                 data = JSON.parse(cleanData);
             } catch (e) {
-                console.error("Excel Data Parse Error:", e);
-                throw new Error("Format data untuk Excel tidak valid. Pastikan data berupa JSON Array.");
+                console.error("Excel Data Parse Error: JSON parsing failed, attempting CSV fallback...", e);
+                
+                // RESILIENT FALLBACK: Try to parse it as CSV/TSV
+                if (cleanData.includes('\n')) {
+                    const lines = cleanData.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+                    if (lines.length > 1) {
+                        // Detect delimiter: comma, semicolon, or tab
+                        let delimiter = ',';
+                        const firstLine = lines[0];
+                        if (firstLine.includes('\t')) delimiter = '\t';
+                        else if (firstLine.includes(';')) delimiter = ';';
+                        
+                        // Split line helper handling quotes
+                        const splitCSVLine = (line, sep) => {
+                            const result = [];
+                            let current = '';
+                            let inQuotes = false;
+                            for (let idx = 0; idx < line.length; idx++) {
+                                const char = line[idx];
+                                if (char === '"') {
+                                    inQuotes = !inQuotes;
+                                } else if (char === sep && !inQuotes) {
+                                    result.push(current.trim());
+                                    current = '';
+                                } else {
+                                    current += char;
+                                }
+                            }
+                            result.push(current.trim());
+                            return result.map(v => v.replace(/^["']|["']$/g, '').trim());
+                        };
+
+                        // Parse header
+                        const headers = splitCSVLine(lines[0], delimiter);
+                        const parsedData = [];
+                        
+                        for (let k = 1; k < lines.length; k++) {
+                            const cells = splitCSVLine(lines[k], delimiter);
+                            const obj = {};
+                            headers.forEach((header, idx) => {
+                                if (header) {
+                                    obj[header] = cells[idx] !== undefined ? cells[idx] : '';
+                                }
+                            });
+                            parsedData.push(obj);
+                        }
+                        
+                        if (parsedData.length > 0) {
+                            data = parsedData;
+                            console.log(`[EXPORT:EXCEL:FALLBACK] CSV parsed successfully into ${data.length} elements!`);
+                        } else {
+                            throw new Error("Format data untuk Excel tidak valid. Pastikan data berupa JSON Array.");
+                        }
+                    } else {
+                        throw new Error("Format data untuk Excel tidak valid. Pastikan data berupa JSON Array.");
+                    }
+                } else {
+                    throw new Error("Format data untuk Excel tidak valid. Pastikan data berupa JSON Array.");
+                }
             }
         }
         

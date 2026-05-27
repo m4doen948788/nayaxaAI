@@ -596,20 +596,70 @@ const nayaxaController = {
             const path = require('path');
             const fs = require('fs');
             const exportDir = path.join(__dirname, '../../uploads/exports');
-            const filePath = path.join(exportDir, filename);
+            
+            // 1. Try exact match
+            let filePath = path.join(exportDir, filename);
+
+            // 2. Fallback: Try sanitization matching and extension fallbacks
+            if (!fs.existsSync(filePath)) {
+                console.log(`[DOWNLOAD] Exact match not found for: "${filename}". Attempting sanitization and fuzzy fallbacks...`);
+                
+                // Fallback A: Standard sanitization matching (spaces -> _, strip non-alphanumeric/./_/-)
+                const sanitized = filename.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
+                let fallbackPath = path.join(exportDir, sanitized);
+                
+                if (fs.existsSync(fallbackPath)) {
+                    console.log(`[DOWNLOAD] Found via sanitization match: "${sanitized}"`);
+                    filePath = fallbackPath;
+                } else {
+                    // Fallback B: Extension correction (adding ext if stripped or duplicated)
+                    let ext = path.extname(filename).toLowerCase();
+                    let safeName = sanitized;
+                    if (ext && !sanitized.toLowerCase().endsWith(ext)) {
+                        safeName = `${sanitized}${ext}`;
+                    }
+                    fallbackPath = path.join(exportDir, safeName);
+                    
+                    if (fs.existsSync(fallbackPath)) {
+                        console.log(`[DOWNLOAD] Found via extension correction: "${safeName}"`);
+                        filePath = fallbackPath;
+                    } else {
+                        // Fallback C: Alphanumeric core fuzzy matching (ignores casing, punctuation, and extra formatting)
+                        try {
+                            const files = fs.readdirSync(exportDir);
+                            const coreQuery = filename.toLowerCase().replace(/[^a-z0-9]/gi, '');
+                            const matchedFile = files.find(f => {
+                                const coreF = f.toLowerCase().replace(/[^a-z0-9]/gi, '');
+                                return coreF.includes(coreQuery) || coreQuery.includes(coreF);
+                            });
+                            
+                            if (matchedFile) {
+                                console.log(`[DOWNLOAD] Found via fuzzy matching: "${matchedFile}" for query: "${filename}"`);
+                                filePath = path.join(exportDir, matchedFile);
+                            }
+                        } catch (dirErr) {
+                            console.error('[DOWNLOAD] Directory listing fallback error:', dirErr);
+                        }
+                    }
+                }
+            }
 
             if (!fs.existsSync(filePath)) {
+                console.warn(`[DOWNLOAD:404] File not found even after fuzzy fallbacks: "${filename}"`);
                 return res.status(404).send('File not found.');
             }
 
+            // Determine actual resolved filename
+            const resolvedFilename = path.basename(filePath);
+
             // PDF Smart Preview: If it's a PDF, try to send as inline preview
-            if (filename.toLowerCase().endsWith('.pdf')) {
+            if (resolvedFilename.toLowerCase().endsWith('.pdf')) {
                 res.setHeader('Content-Type', 'application/pdf');
-                res.setHeader('Content-Disposition', 'inline; filename="' + filename + '"');
+                res.setHeader('Content-Disposition', 'inline; filename="' + resolvedFilename + '"');
                 return res.sendFile(filePath);
             }
 
-            res.download(filePath, filename, (err) => {
+            res.download(filePath, resolvedFilename, (err) => {
                 if (err) {
                     console.error('[DOWNLOAD] Error sending file:', err);
                     if (!res.headersSent) {
