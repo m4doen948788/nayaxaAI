@@ -307,7 +307,7 @@ export default function NayaxaAssistant({
                             href={href} 
                             onClick={(e) => { 
                               e.preventDefault(); 
-                              handleExcelPreview(href); 
+                              handleExcelPreview(href || ''); 
                             }}
                             className="text-emerald-600 hover:text-emerald-700 underline font-bold inline-flex items-center gap-1 cursor-pointer"
                           >
@@ -422,7 +422,7 @@ export default function NayaxaAssistant({
                                 href={href} 
                                 onClick={(e) => { 
                                   e.preventDefault(); 
-                                  handleExcelPreview(href); 
+                                  handleExcelPreview(href || ''); 
                                 }}
                                 className="text-emerald-600 hover:text-emerald-700 underline font-bold inline-flex items-center gap-1 cursor-pointer"
                               >
