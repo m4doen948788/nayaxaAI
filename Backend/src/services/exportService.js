@@ -56,13 +56,42 @@ const sanitizeForPDFKit = (text) => {
         .replace(/[^\x00-\x7F\x80-\xFF]/g, '');
 };
 
+/**
+ * Resiliently repairs truncated JSON stringified arrays resulting from LLM token limit cut-offs.
+ */
+const repairTruncatedJSON = (jsonStr) => {
+    if (!jsonStr || typeof jsonStr !== 'string') return jsonStr;
+    let s = jsonStr.trim();
+    if (s.startsWith('[') && !s.endsWith(']')) {
+        console.log("[JSON:REPAIR] Detected truncated JSON array. Attempting to repair...");
+        
+        // Find the last complete object close bracket '}'
+        const lastBrace = s.lastIndexOf('}');
+        if (lastBrace !== -1) {
+            // Cut off any trailing garbage/incomplete fields and close the array
+            s = s.substring(0, lastBrace + 1) + ']';
+            console.log("[JSON:REPAIR] Successfully repaired truncated JSON array at last complete object.");
+        } else {
+            // No closed object found, check if it starts with '[{'
+            const lastQuote = s.lastIndexOf('"');
+            if (lastQuote !== -1) {
+                s = s.substring(0, lastQuote + 1) + '}]';
+                console.log("[JSON:REPAIR] Forcibly closed JSON array string.");
+            }
+        }
+    }
+    return s;
+};
+
 const exportService = {
     generateExcel: async (data, filename = 'export.xlsx') => {
         console.log(`[EXPORT:EXCEL] Generating ${filename}. Content elements: ${Array.isArray(data) ? data.length : 'N/A'}`);
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet('Nayaxa Export');
         if (typeof data === 'string') {
-            const cleanData = data.replace(/^```(json|csv|tsv|text)?\n?/, '').replace(/\n?```$/, '').trim();
+            let cleanData = data.replace(/^```(json|csv|tsv|text)?\n?/, '').replace(/\n?```$/, '').trim();
+            // Resiliently auto-repair truncated JSON arrays
+            cleanData = repairTruncatedJSON(cleanData);
             try {
                 data = JSON.parse(cleanData);
             } catch (e) {

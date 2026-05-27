@@ -136,7 +136,7 @@ const nayaxaTools = [{
         },
         {
             name: "generate_document",
-            description: "Membuat dokumen teks atau tabel baru. Jika user ingin mengekspor RIWAYAT OBROLAN, gunakan 'export_discussion_to_word'. DILARANG KERAS menggunakan tool ini untuk membuat presentasi/paparan/slides.",
+            description: "Membuat dokumen baru dalam format PDF, Excel, atau Word. Gunakan format 'pdf' untuk dokumen PDF, 'excel' untuk spreadsheet, dan 'word' untuk dokumen .docx. Jika user ingin mengekspor RIWAYAT OBROLAN, gunakan 'export_discussion_to_word'. DILARANG KERAS menggunakan tool ini untuk membuat presentasi/paparan/slides (.pptx).",
             parameters: {
                 type: "object",
                 properties: {
@@ -972,7 +972,8 @@ ${nayaxaPromptService.getNayaxaProtokolPrompt()}
             - Jika user bertanya tentang dokumen, mencari file, atau meminta file spesifik ("Mana dokumen X?", "Minta file Y"), Anda WAJIB LANGSUNG menggunakan tool 'search_files_and_knowledge' tanpa basa-basi.
             - **ANDA WAJIB memberikan link download** untuk setiap hasil berkategori [FILE].
             - **DILARANG KERAS** memberikan jawaban tanpa link jika file ditemukan.
-            - **DILARANG KERAS MENULIS LINK SECARA MANUAL** di dalam teks jawaban Anda (seperti http://localhost...). Cukup gunakan tool, dan sistem akan menampilkannya secara otomatis.
+            - **DILARANG KERAS MENULIS LINK SECARA MANUAL** di dalam teks jawaban Anda (seperti http://localhost...). Cukup gunakan tool, dan sistem akan menampilkannya secara otomatis melalui tombol unduh.
+            - **PEMANGGILAN MULTI-FORMAT (PENTING):** Jika pengguna meminta beberapa format dokumen sekaligus (misalnya: "buatkan laporan dalam format PDF dan Excel"), Anda **WAJIB memanggil tool 'generate_document' untuk SETIAP format secara terpisah** (baik paralel maupun berurutan). DILARANG KERAS hanya memanggil tool untuk satu format lalu menuliskan link manual palsu untuk format lainnya! Setiap file hasil unduhan yang Anda tawarkan HARUS diproduksi oleh pemanggilan tool yang nyata.
             - **ON-DEMAND LEARNING**: Jika user meminta Anda untuk "Membaca", "Menganalisis", "Mempelajari", atau "Meringkas" dokumen yang ditemukan di Dashboard (bukan file yang baru saja diunggah di chat), gunakan tool 'analyze_dashboard_document' dengan ID file yang sesuai. Hasil analisis akan secara otomatis disimpan ke memori jangka panjang Anda (Nayaxa Intelligence) agar hemat token di masa depan.
             - Format Link: [Unduh (Nama File)](URL_DARI_TOOL). Letakkan link ini secara menonjol di bagian ATAS jawaban Anda dengan format tombol Markdown yang jelas.
             

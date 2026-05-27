@@ -902,8 +902,8 @@ const nayaxaDeepSeekService = {
             - DILARANG KERAS membuat file Word jika user sedang melakukan revisi pada file presentasi.
             - PANDUAN KHUSUS DOKUMEN PANJANG (PERBUP/LAPORAN):
             - Jika user meminta draf dokumen yang panjang dan formal (seperti Peraturan Bupati/Perbup), Anda WAJIB menggunakan tool 'generate_document' untuk menghasilkan file lengkapnya.
-            - **DILARANG KERAS menulis isi lengkap dokumen panjang di dalam chat bubble.** Ini memboroskan token dan membuat chat berantakan.
             - Di dalam chat bubble, Anda HANYA diperbolehkan menulis: (1) Outline/Daftar Isi singkat, (2) Ringkasan eksekutif maksimal 2 paragraf, dan (3) Informasi bahwa file sudah siap diunduh.
+            - **PEMANGGILAN MULTI-FORMAT (PENTING):** Jika pengguna meminta beberapa format dokumen sekaligus (misalnya: "buatkan PDF dan Excel"), Anda **WAJIB memanggil tool 'generate_document' untuk SETIAP format secara terpisah** (baik paralel maupun berurutan). DILARANG KERAS hanya memanggil tool untuk satu format lalu menuliskan link manual palsu untuk format lainnya! Setiap file hasil unduhan yang Anda tawarkan HARUS diproduksi oleh pemanggilan tool yang nyata.
             
             PANDUAN PER-FILE ACTIONS (v4.6.1):
             - Jika Anda melihat tag \`[FILE: nama_file -> ACTION: nama_aksi]\`, ikuti instruksi spesifik tersebut untuk file yang dimaksud:
