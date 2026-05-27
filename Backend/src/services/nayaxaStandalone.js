@@ -681,7 +681,7 @@ ${dynamicGlossary}`;
 
     searchInternet: async (query) => {
         try {
-            console.log(`[Nayaxa] Searching Internet (Resilience Mode 2.0) for: ${query}`);
+            console.log(`[Nayaxa] Searching Internet (Resilience Hardened 3.0) for: ${query}`);
             const results = [];
             const cheerio = require('cheerio');
 
@@ -744,7 +744,7 @@ ${dynamicGlossary}`;
                 } catch (err) { console.error('[Nayaxa] Bing Scrape Error:', err.message); }
             };
 
-            // WATERFALL API HELPER
+            // WATERFALL API HELPER (Fully Sanitized & Defensive)
             const searchViaAPIs = async (searchQuery, limit = 5) => {
                 console.log(`[Nayaxa] Fetching from Trusted APIs (Parallel) for: ${searchQuery}`);
                 const apiTasks = [];
@@ -754,13 +754,23 @@ ${dynamicGlossary}`;
                     apiTasks.push(axios.post('https://google.serper.dev/search', { q: searchQuery, gl: "id", hl: "id" }, {
                         headers: { 'X-API-KEY': process.env.SERPER_API_KEY, 'Content-Type': 'application/json' },
                         timeout: 5000
-                    }).then(res => res.data?.organic?.slice(0, limit).map(r => ({ source: 'Google (Serper)', title: r.title, snippet: r.snippet, link: r.link })) || []).catch(() => []));
+                    }).then(res => res.data?.organic?.slice(0, limit).map(r => ({
+                        source: 'Google (Serper)',
+                        title: (r.title || '').trim(),
+                        snippet: (r.snippet || '').trim() || '...',
+                        link: r.link || ''
+                    })).filter(item => item.link && item.title) || []).catch(() => []));
                 }
 
                 // 2. Tavily
                 if (process.env.TAVILY_API_KEY) {
                     apiTasks.push(axios.post('https://api.tavily.com/search', { api_key: process.env.TAVILY_API_KEY, query: searchQuery, max_results: limit }, { timeout: 5000 })
-                        .then(res => res.data?.results?.map(r => ({ source: 'Tavily (AI)', title: r.title, snippet: r.content, link: r.url })) || []).catch(() => []));
+                        .then(res => res.data?.results?.map(r => ({
+                            source: 'Tavily (AI)',
+                            title: (r.title || '').trim(),
+                            snippet: (r.content || '').trim() || '...',
+                            link: r.url || ''
+                        })).filter(item => item.link && item.title) || []).catch(() => []));
                 }
 
                 // 3. Brave Search
@@ -769,7 +779,12 @@ ${dynamicGlossary}`;
                         params: { q: searchQuery, count: limit },
                         headers: { 'X-Subscription-Token': process.env.BRAVE_SEARCH_API_KEY, 'Accept': 'application/json' },
                         timeout: 5000
-                    }).then(res => res.data?.web?.results?.slice(0, limit).map(r => ({ source: 'Brave Search', title: r.title, snippet: r.description, link: r.url })) || []).catch(() => []));
+                    }).then(res => res.data?.web?.results?.slice(0, limit).map(r => ({
+                        source: 'Brave Search',
+                        title: (r.title || '').trim(),
+                        snippet: (r.description || '').trim() || '...',
+                        link: r.url || ''
+                    })).filter(item => item.link && item.title) || []).catch(() => []));
                 }
 
                 const allResults = await Promise.all(apiTasks);
@@ -781,7 +796,11 @@ ${dynamicGlossary}`;
             const latestRegionalPeriodStart = currentYear <= 2026 ? 2025 : Math.floor((currentYear - 2025) / 4) * 4 + 2025;
             const latestRegionalPeriod = `${latestRegionalPeriodStart}-${latestRegionalPeriodStart + 4}`;
             
-            let cleanQuery = query.replace(/cari di internet|search for|siapakah|jelaskan tentang|mencari|siapa itu/gi, '').trim();
+            let cleanQuery = (query || '').replace(/cari di internet|search for|siapakah|jelaskan tentang|mencari|siapa itu/gi, '').trim();
+            if (!cleanQuery) {
+                return { success: false, message: "Query pencarian kosong." };
+            }
+
             const isHeavyQuery = /bupati|walikota|gubernur|wali kota|kepala daerah|pejabat|pelantikan|presiden|menteri|pilkada|pilwalkot|pilgub|kpu/i.test(cleanQuery);
             const isResearchIntent = /riset|penelitian|jurnal|ilmiah|biologi|antariksa|angkasa|astronomi|sains|penemuan terbaru|studi kasus|eksperimen/i.test(cleanQuery);
             
@@ -824,7 +843,7 @@ ${dynamicGlossary}`;
                 mainTasks.push(searchViaAPIs(searchQ, apiLimit).then(res => results.push(...res)));
             }
 
-            // Wikipedia Task
+            // Wikipedia Task (Sanitized against empty/null fields)
             mainTasks.push((async () => {
                 try {
                     const wikiQ = isHeavyQuery ? queriesToTry[0] : cleanQuery;
@@ -833,8 +852,15 @@ ${dynamicGlossary}`;
                         headers: { 'User-Agent': 'NayaxaBot/1.1' },
                         timeout: 3000
                     });
-                    if (wikiRes.data.query?.search) {
-                        wikiRes.data.query.search.forEach(s => results.push({ source: 'Wikipedia', title: s.title, snippet: s.snippet.replace(/<[^>]*>/g, ''), link: `https://id.wikipedia.org/wiki/${encodeURIComponent(s.title)}` }));
+                    if (wikiRes.data?.query?.search) {
+                        wikiRes.data.query.search.forEach(s => {
+                            const title = (s.title || '').trim();
+                            const snippet = (s.snippet || '').replace(/<[^>]*>/g, '').trim() || '...';
+                            const link = s.title ? `https://id.wikipedia.org/wiki/${encodeURIComponent(s.title)}` : '';
+                            if (title && link) {
+                                results.push({ source: 'Wikipedia', title, snippet, link });
+                            }
+                        });
                     }
                 } catch (err) {}
             })());
@@ -870,7 +896,7 @@ ${dynamicGlossary}`;
                 
                 if (words.length === 0) return 100; // Failsafe for very short queries
                 
-                const text = (res.title + ' ' + res.snippet).toLowerCase();
+                const text = ((res.title || '') + ' ' + (res.snippet || '')).toLowerCase();
                 let matches = 0;
                 words.forEach(w => { if (text.includes(w)) matches++; });
                 
@@ -881,12 +907,12 @@ ${dynamicGlossary}`;
                 let score = 0;
                 let type = 'GENERAL';
                 for (const td of TRUSTED_DOMAINS) {
-                    if (td.pattern.test(res.link)) {
+                    if (res.link && td.pattern.test(res.link)) {
                         score += td.score;
                         type = td.type;
                     }
                 }
-                const text = (res.title + ' ' + res.snippet).toLowerCase();
+                const text = ((res.title || '') + ' ' + (res.snippet || '')).toLowerCase();
                 // Research keyword detection
                 if (/abstrak|metodologi|kesimpulan|hasil penelitian|riset|jurnal|ilmiah|biologi|antariksa|angkasa|astronomi|sains|penemuan terbaru|studi kasus|eksperimen/i.test(text)) score += 30;
                 
@@ -901,7 +927,7 @@ ${dynamicGlossary}`;
                 // Recency Penalty (Hardening v4.6.1)
                 // If query is for 'current' but result mentions old years, penalize heavily.
                 const oldYears = /\b(2018|2019|2020|2021|2022)\b/;
-                if (oldYears.test(text) || oldYears.test(res.link)) {
+                if (oldYears.test(text) || (res.link && oldYears.test(res.link))) {
                     score -= 200;
                 }
 
@@ -913,12 +939,12 @@ ${dynamicGlossary}`;
             const finalResults = [];
             const seen = new Set();
             for (const r of results) {
-                if (!seen.has(r.link)) {
+                if (r && r.link && !seen.has(r.link)) {
                     seen.add(r.link);
                     
                     // Universal Relevance Check
                     const relevance = calculateRelevance(cleanQuery, r);
-                    if (relevance < 15 && !r.link.includes('.go.id')) { // Ignore irrelevant, except official govt sites
+                    if (relevance < 15 && typeof r.link === 'string' && !r.link.includes('.go.id')) { // Ignore irrelevant, except official govt sites
                         continue;
                     }
                     
@@ -929,6 +955,7 @@ ${dynamicGlossary}`;
             finalResults.sort((a, b) => b.totalScore - a.totalScore);
 
             const validateLink = async (result) => {
+                if (!result || !result.link) return null;
                 try {
                     // Fast HEAD check for 404s
                     const res = await axios.head(result.link, { 
@@ -969,7 +996,11 @@ ${dynamicGlossary}`;
 
         } catch (error) {
             console.error('Search Critical Error:', error.message);
-            return { error: "Gangguan koneksi internet pada server Nayaxa." };
+            const searchDate = new Date().toLocaleString('id-ID', { 
+                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', 
+                hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short' 
+            });
+            return { success: false, search_date: searchDate, error: "Gangguan koneksi internet atau parsing pencarian pada server Nayaxa." };
         }
     }
 };
