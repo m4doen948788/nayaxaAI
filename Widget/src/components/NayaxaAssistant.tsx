@@ -299,7 +299,8 @@ export default function NayaxaAssistant({
                   remarkPlugins={[remarkGfm]}
                   components={{
                     a: ({ href, children }) => {
-                      const isExcel = href && (href.toLowerCase().endsWith('.xlsx') || href.toLowerCase().endsWith('.xls'));
+                      const cleanPath = href ? href.toLowerCase().split('?')[0].split('#')[0] : '';
+                      const isExcel = cleanPath.endsWith('.xlsx') || cleanPath.endsWith('.xls');
                       if (isExcel) {
                         return (
                           <a 
@@ -413,7 +414,8 @@ export default function NayaxaAssistant({
                       remarkPlugins={[remarkGfm]}
                       components={{
                         a: ({ href, children }) => {
-                          const isExcel = href && (href.toLowerCase().endsWith('.xlsx') || href.toLowerCase().endsWith('.xls'));
+                          const cleanPath = href ? href.toLowerCase().split('?')[0].split('#')[0] : '';
+                          const isExcel = cleanPath.endsWith('.xlsx') || cleanPath.endsWith('.xls');
                           if (isExcel) {
                             return (
                               <a 

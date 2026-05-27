@@ -130,13 +130,23 @@ const exportService = {
         
         if (Array.isArray(data) && data.length > 0) {
             const cleanedData = recursiveDataCleaner(data);
-            const columns = Object.keys(cleanedData[0]).map(key => ({ header: key.toUpperCase(), key, width: 20 }));
+            
+            // Gather all unique keys across all rows to prevent missing/cut-off columns
+            const uniqueKeys = new Set();
+            cleanedData.forEach(row => {
+                if (row && typeof row === 'object') {
+                    Object.keys(row).forEach(k => uniqueKeys.add(k));
+                }
+            });
+            
+            const columns = Array.from(uniqueKeys).map(key => ({ header: key.toUpperCase(), key, width: 20 }));
             worksheet.columns = columns;
             worksheet.addRows(cleanedData);
         }
-        // Sanitize filename for URL and filesystem safety
-        const sanitized = filename.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
-        const safe = sanitized.endsWith('.xlsx') ? sanitized : `${sanitized}.xlsx`;
+        // Sanitize filename for URL and filesystem safety (prevent double extension)
+        let cleanName = filename.replace(/\.xlsx$/i, '').replace(/\.xls$/i, '').trim();
+        const sanitized = cleanName.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
+        const safe = `${sanitized}.xlsx`;
         const p = path.join(EXPORT_DIR, safe);
         await workbook.xlsx.writeFile(p);
         return `/export/${safe}`;
@@ -153,9 +163,10 @@ const exportService = {
                 console.error('[PDF:CRITICAL] Document Error:', err);
                 reject(err);
             });
-            // Sanitize filename
-            const sanitized = filename.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
-            const safe = sanitized.endsWith('.pdf') ? sanitized : `${sanitized}.pdf`;
+            // Sanitize filename and prevent double extension (.pdf.pdf)
+            let cleanName = filename.replace(/\.pdf$/i, '').trim();
+            const sanitized = cleanName.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
+            const safe = `${sanitized}.pdf`;
             const p = path.join(EXPORT_DIR, safe);
             const s = fs.createWriteStream(p);
             
@@ -457,8 +468,10 @@ const exportService = {
         };
 
         const doc = new Document(docOptions);
-        const sanitized = filename.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
-        const safe = sanitized.endsWith('.docx') ? sanitized : `${sanitized}.docx`;
+        // Sanitize filename and prevent double extension (.docx.docx)
+        let cleanName = filename.replace(/\.docx$/i, '').trim();
+        const sanitized = cleanName.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
+        const safe = `${sanitized}.docx`;
         const p = path.join(EXPORT_DIR, safe);
         const b = await Packer.toBuffer(doc);
         fs.writeFileSync(p, b);
