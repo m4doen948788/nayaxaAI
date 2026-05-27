@@ -995,38 +995,8 @@ ${dynamicGlossary}`;
             finalResults.sort((a, b) => b.totalScore - a.totalScore);
             console.log(`[Nayaxa Debug] Scoring completed. Final sorted candidate results: ${finalResults.length}`);
 
-            const validateLink = async (result) => {
-                if (!result || !result.link) return null;
-                try {
-                    console.log(`[Nayaxa Debug] validateLink starting HEAD request for: ${result.link}`);
-                    // Fast HEAD check for 404s
-                    const res = await axios.head(result.link, { 
-                        headers: commonHeaders, 
-                        timeout: 3000, 
-                        maxRedirects: 3,
-                        validateStatus: (status) => status < 400 || status === 403 // Discard 404+
-                    });
-                    console.log(`[Nayaxa Debug] validateLink HEAD succeeded for: ${result.link}`);
-                    return result;
-                } catch (err) {
-                    console.warn(`[Nayaxa Debug] validateLink failed/warning for ${result.link}: ${err.message}`);
-                    if (err.response?.status === 404) {
-                        console.warn(`[Nayaxa] Filtering Dead Link (404): ${result.link}`);
-                        return null;
-                    }
-                    // For other errors (timeout, 403, 500, etc.), we keep it as fallback 
-                    // unless it's a confirmed 404
-                    return result;
-                }
-            };
-
-            console.log(`[Nayaxa Debug] Queueing HEAD link validations for top 5 candidates.`);
-            const candidateResults = finalResults.slice(0, 5);
-            const validatedResults = await Promise.allSettled(candidateResults.map(r => validateLink(r)));
-            const activeResults = validatedResults
-                .filter(res => res.status === 'fulfilled' && res.value !== null)
-                .map(res => res.value);
-            console.log(`[Nayaxa Debug] Link validation completed. Validated active results: ${activeResults.length}`);
+            console.log(`[Nayaxa Debug] Bypassing real-time link validations to prevent socket hangs.`);
+            const activeResults = finalResults.slice(0, 4);
 
             const searchDate = new Date().toLocaleString('id-ID', { 
                 weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', 
@@ -1037,7 +1007,7 @@ ${dynamicGlossary}`;
                 success: true,
                 query,
                 search_date: searchDate,
-                results: activeResults.slice(0, 4).map(r => ({
+                results: activeResults.map(r => ({
                     title: r.title,
                     snippet: r.snippet,
                     link: r.link
