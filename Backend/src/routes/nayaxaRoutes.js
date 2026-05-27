@@ -17,6 +17,30 @@ const DASHBOARD_UPLOADS = isLocal
 router.get('/export/:filename', nayaxaController.downloadExport);
 router.get('/api/nayaxa/export/:filename', nayaxaController.downloadExport);
 
+// Debug endpoint for exports diagnostics
+router.get('/api/nayaxa/debug-exports', (req, res) => {
+    try {
+        const fs = require('fs');
+        const path = require('path');
+        const exportDir = path.join(__dirname, '../../uploads/exports');
+        if (!fs.existsSync(exportDir)) {
+            return res.json({ success: true, message: 'Export directory does not exist yet.', files: [] });
+        }
+        const files = fs.readdirSync(exportDir).map(file => {
+            const stats = fs.statSync(path.join(exportDir, file));
+            return {
+                name: file,
+                size: stats.size,
+                created: stats.birthtime
+            };
+        });
+        files.sort((a, b) => b.created - a.created);
+        res.json({ success: true, files });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // Public Static Files (For previews in iframes/links)
 // Public Routes for Static Files (Dashboard Uploads & System Uploads)
 router.use('/uploads/dashboard', expressStatic(DASHBOARD_UPLOADS));
