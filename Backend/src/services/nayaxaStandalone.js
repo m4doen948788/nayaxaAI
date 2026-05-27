@@ -1020,8 +1020,8 @@ ${dynamicGlossary}`;
                 }
             };
 
-            console.log(`[Nayaxa Debug] Queueing HEAD link validations for top 10 candidates.`);
-            const candidateResults = finalResults.slice(0, 10);
+            console.log(`[Nayaxa Debug] Queueing HEAD link validations for top 5 candidates.`);
+            const candidateResults = finalResults.slice(0, 5);
             const validatedResults = await Promise.allSettled(candidateResults.map(r => validateLink(r)));
             const activeResults = validatedResults
                 .filter(res => res.status === 'fulfilled' && res.value !== null)
@@ -1037,7 +1037,11 @@ ${dynamicGlossary}`;
                 success: true,
                 query,
                 search_date: searchDate,
-                results: activeResults.slice(0, 6).map(r => ({ ...r, trust_level: r.totalScore > 100 ? 'TERVERIFIKASI' : 'BELUM TERVERIFIKASI' })),
+                results: activeResults.slice(0, 4).map(r => ({
+                    title: r.title,
+                    snippet: r.snippet,
+                    link: r.link
+                })),
                 search_engine_used: isBlocked ? 'API Waterfall (Scraper Blocked)' : (isHeavyQuery ? 'Hybrid API (Priority)' : 'Polyglot Search 2.0')
             } : { success: false, search_date: searchDate, message: "Informasi tidak ditemukan atau mesin pencari diblokir." };
 
