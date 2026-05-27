@@ -299,7 +299,8 @@ export default function NayaxaAssistant({
                   remarkPlugins={[remarkGfm]}
                   components={{
                     a: ({ href, children }) => {
-                      if (href && (href.toLowerCase().endsWith('.xlsx') || href.toLowerCase().includes('/export/'))) {
+                      const isExcel = href && (href.toLowerCase().endsWith('.xlsx') || href.toLowerCase().endsWith('.xls'));
+                      if (isExcel) {
                         return (
                           <a 
                             href={href} 
@@ -412,7 +413,8 @@ export default function NayaxaAssistant({
                       remarkPlugins={[remarkGfm]}
                       components={{
                         a: ({ href, children }) => {
-                          if (href && (href.toLowerCase().endsWith('.xlsx') || href.toLowerCase().includes('/export/'))) {
+                          const isExcel = href && (href.toLowerCase().endsWith('.xlsx') || href.toLowerCase().endsWith('.xls'));
+                          if (isExcel) {
                             return (
                               <a 
                                 href={href} 
