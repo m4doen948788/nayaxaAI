@@ -68,6 +68,7 @@ router.get('/proactive-insight', nayaxaController.getProactiveInsight);
 router.get('/sessions', nayaxaController.getChatSessions);
 router.get('/history/:session_id', nayaxaController.getChatHistoryBySession);
 router.delete('/session/:session_id', nayaxaController.deleteChatSession);
+router.post('/sessions/delete-batch', nayaxaController.deleteChatSessionsBatch);
 router.post('/session/:session_id/pin', nayaxaController.togglePinSession);
 router.post('/chat', nayaxaController.chat);
 router.post('/chatStream', nayaxaController.chatStream); // Widget & copy-dashboard

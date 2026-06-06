@@ -582,6 +582,20 @@ const nayaxaMindService = {
         }
     },
 
+    cleanExpiredChats: async () => {
+        try {
+            console.log('[Mind] Cleaning up expired chat history (older than 3 days)...');
+            const [result] = await dbNayaxa.query(`
+                DELETE FROM nayaxa_chat_history 
+                WHERE created_at < NOW() - INTERVAL 3 DAY 
+                  AND session_id NOT IN (SELECT session_id FROM nayaxa_pinned_sessions)
+            `);
+            console.log(`[Mind] Chat history cleanup complete. Deleted rows: ${result.affectedRows}`);
+        } catch (e) {
+            console.error('[Mind] Error cleaning up expired chats:', e.message);
+        }
+    },
+
     /**
      * Main Initializer
      */
@@ -593,11 +607,13 @@ const nayaxaMindService = {
             // learnNewDocuments DISABLED to save tokens. Use on-demand ingestion instead.
             // await nayaxaMindService.learnNewDocuments(); 
             await nayaxaMindService.generateSystemSnapshot();
+            await nayaxaMindService.cleanExpiredChats();
         }, 10000);
 
         // Periodic Interval (Snapshot logic only)
         setInterval(async () => {
             await nayaxaMindService.generateSystemSnapshot();
+            await nayaxaMindService.cleanExpiredChats();
         }, intervalMinutes * 60 * 1000);
     },
 

@@ -580,9 +580,37 @@ const nayaxaController = {
                 'DELETE FROM nayaxa_chat_history WHERE session_id = ? AND app_id = ?',
                 [session_id, app_id]
             );
+            // Also clean up from pinned sessions if deleted
+            await dbNayaxa.query(
+                'DELETE FROM nayaxa_pinned_sessions WHERE session_id = ? AND app_id = ?',
+                [session_id, app_id]
+            );
             res.json({ success: true, message: 'Chat session deleted successfully.' });
         } catch (error) {
             console.error('Delete Session Error:', error);
+            res.status(500).json({ success: false, message: error.message });
+        }
+    },
+
+    deleteChatSessionsBatch: async (req, res) => {
+        try {
+            const { session_ids } = req.body;
+            const app_id = req.nayaxaApp.id;
+            if (!session_ids || !Array.isArray(session_ids) || session_ids.length === 0) {
+                return res.status(400).json({ success: false, message: 'Tidak ada sesi yang dipilih.' });
+            }
+            await dbNayaxa.query(
+                'DELETE FROM nayaxa_chat_history WHERE session_id IN (?) AND app_id = ?',
+                [session_ids, app_id]
+            );
+            // Also clean up from pinned sessions if deleted
+            await dbNayaxa.query(
+                'DELETE FROM nayaxa_pinned_sessions WHERE session_id IN (?) AND app_id = ?',
+                [session_ids, app_id]
+            );
+            res.json({ success: true, message: 'Chat sessions deleted successfully.' });
+        } catch (error) {
+            console.error('Delete Sessions Batch Error:', error);
             res.status(500).json({ success: false, message: error.message });
         }
     },
