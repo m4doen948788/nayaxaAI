@@ -3,6 +3,7 @@ const nayaxaDeepSeek = require('../services/nayaxaDeepSeekService');
 const nayaxaRoutingService = require('../services/nayaxaRoutingService');
 const nayaxaStandalone = require('../services/nayaxaStandalone');
 const personaService = require('../services/personaService');
+const sessionTitleService = require('../services/sessionTitleService');
 const dbNayaxa = require('../config/dbNayaxa');
 const dbDashboard = require('../config/dbDashboard');
 const codeAgent = require('../services/codeAgentService');
@@ -265,6 +266,9 @@ const nayaxaController = {
             const simpleAiAnalyzer = (prompt) => nayaxaRoutingService.routeSimpleTask(prompt);
             personaService.triggerPersonaUpdate(user_id, user_name, activeSessionId, simpleAiAnalyzer);
 
+            // --- TITLE GENERATION: Fire-and-forget background title update ---
+            sessionTitleService.triggerTitleUpdate(app_id, user_id, activeSessionId, simpleAiAnalyzer);
+
             res.json(resultData);
         } catch (error) {
             console.error('Chat Error:', error);
@@ -490,6 +494,12 @@ const nayaxaController = {
             responseTextString = responseTextString.trim();
 
             sendEvent('done', { text: responseTextString, brain_used: brainUsed, session_id: activeSessionId });
+
+            // --- PERSONA & TITLE UPDATES: Fire-and-forget background updates ---
+            const simpleAiAnalyzer = (prompt) => nayaxaRoutingService.routeSimpleTask(prompt);
+            personaService.triggerPersonaUpdate(user_id, user_name, activeSessionId, simpleAiAnalyzer);
+            sessionTitleService.triggerTitleUpdate(app_id, user_id, activeSessionId, simpleAiAnalyzer);
+
             res.end();
 
         } catch (error) {
@@ -516,9 +526,17 @@ const nayaxaController = {
                 `SELECT 
                     h.session_id, 
                     MAX(h.created_at) as last_msg, 
-                    SUBSTRING(MAX(h.content), 1, 50) as title,
+                    COALESCE(
+                        NULLIF(MAX(s.title), ''), 
+                        SUBSTRING((
+                            SELECT content FROM nayaxa_chat_history 
+                            WHERE session_id = h.session_id 
+                            ORDER BY id ASC LIMIT 1
+                        ), 1, 50)
+                    ) as title,
                     (p.id IS NOT NULL) as is_pinned
                  FROM nayaxa_chat_history h 
+                 LEFT JOIN nayaxa_chat_sessions s ON h.session_id = s.session_id
                  LEFT JOIN nayaxa_pinned_sessions p ON h.session_id = p.session_id AND p.user_id = h.user_id
                  WHERE h.app_id = ? AND h.user_id = ? 
                  GROUP BY h.session_id, p.id
@@ -572,7 +590,7 @@ const nayaxaController = {
         } catch (err) { res.status(500).json({ success: false, message: err.message }); }
     },
 
-    deleteChatSession: async (req, res) => {
+     deleteChatSession: async (req, res) => {
         try {
             const { session_id } = req.params;
             const app_id = req.nayaxaApp.id;
@@ -583,6 +601,11 @@ const nayaxaController = {
             // Also clean up from pinned sessions if deleted
             await dbNayaxa.query(
                 'DELETE FROM nayaxa_pinned_sessions WHERE session_id = ? AND app_id = ?',
+                [session_id, app_id]
+            );
+            // Clean up session titles
+            await dbNayaxa.query(
+                'DELETE FROM nayaxa_chat_sessions WHERE session_id = ? AND app_id = ?',
                 [session_id, app_id]
             );
             res.json({ success: true, message: 'Chat session deleted successfully.' });
@@ -606,6 +629,11 @@ const nayaxaController = {
             // Also clean up from pinned sessions if deleted
             await dbNayaxa.query(
                 'DELETE FROM nayaxa_pinned_sessions WHERE session_id IN (?) AND app_id = ?',
+                [session_ids, app_id]
+            );
+            // Clean up session titles
+            await dbNayaxa.query(
+                'DELETE FROM nayaxa_chat_sessions WHERE session_id IN (?) AND app_id = ?',
                 [session_ids, app_id]
             );
             res.json({ success: true, message: 'Chat sessions deleted successfully.' });

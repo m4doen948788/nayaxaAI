@@ -91,6 +91,23 @@ async function migrate() {
             `
         },
         {
+            name: 'nayaxa_chat_sessions',
+            db: dbNayaxa,
+            sql: `
+                CREATE TABLE IF NOT EXISTS nayaxa_chat_sessions (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    app_id      INT NOT NULL DEFAULT 1,
+                    user_id     INT NOT NULL,
+                    session_id  VARCHAR(50) NOT NULL UNIQUE,
+                    title       VARCHAR(255) DEFAULT NULL,
+                    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX (session_id),
+                    INDEX (user_id)
+                )
+            `
+        },
+        {
             name: 'nayaxa_mind_logs',
             db: dbNayaxa,
             sql: `

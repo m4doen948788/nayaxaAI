@@ -77,27 +77,29 @@ const toolFunctions = {
     get_anomalies: async ({ instansi_id }) => {
         const anomalies = await nayaxaStandalone.detectAnomalies(instansi_id);
         return { anomalies };
-    },
-    generate_document: async ({ format, content, filename }, { baseUrl }) => {
+    },    generate_document: async ({ format, content, filename }, { baseUrl }) => {
         try {
+            const docFilename = filename || 'dokumen';
             // --- ANTI-HALLUCINATION GUARDRAIL ---
-            if (filename.toLowerCase().endsWith('.pptx') || filename.toLowerCase().includes('presentasi') || filename.toLowerCase().includes('paparan')) {
+            if (docFilename.toLowerCase().endsWith('.pptx') || docFilename.toLowerCase().includes('presentasi') || docFilename.toLowerCase().includes('paparan')) {
                 return { 
                     success: false, 
                     error: "KESALAHAN FATAL: Anda dilarang menggunakan tool 'generate_document' untuk membuat presentasi (.pptx). Anda WAJIB menggunakan tool 'pembangkit_paparan_pptx' untuk permintaan ini. Silakan ulangi pemanggilan dengan tool yang benar." 
                 };
             }
 
-            const downloadPath = await (format === 'excel' ? exportService.generateExcel(content, filename) :
-                                format === 'pdf' ? exportService.generatePDF(content, filename) :
-                                exportService.generateWord(content, filename));
+            const docFormat = format || (docFilename.toLowerCase().endsWith('.xlsx') || docFilename.toLowerCase().endsWith('.xls') ? 'excel' : docFilename.toLowerCase().endsWith('.pdf') ? 'pdf' : 'word');
+
+            const downloadPath = await (docFormat === 'excel' ? exportService.generateExcel(content, docFilename) :
+                                docFormat === 'pdf' ? exportService.generatePDF(content, docFilename) :
+                                exportService.generateWord(content, docFilename));
             
             const downloadUrl = downloadPath.startsWith('http') ? downloadPath : `${baseUrl}${downloadPath}`;
             
             return { 
                 success: true, 
                 download_url: downloadUrl, 
-                message: `File ${format.toUpperCase()} '${filename}' berhasil dibuat. JANGAN tuliskan link download di jawaban Anda, karena sistem sudah menampilkannya secara otomatis melalui tombol.` 
+                message: `File ${docFormat.toUpperCase()} '${docFilename}' berhasil dibuat. JANGAN tuliskan link download di jawaban Anda, karena sistem sudah menampilkannya secara otomatis melalui tombol.` 
             };
         } catch (err) {
             return { success: false, error: err.message };
@@ -825,27 +827,46 @@ const loadDynamicEngineConfig = async (instansiId) => {
 };
 
 const nayaxaDeepSeekService = {
-    chatWithNayaxa: async (userMessage, files, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '', nama_instansi = 'N/A', personaPromptSnippet = '', userProfile = null, lastActivityContext = null, coding_mode = false, session_id = null, onStepCallback = null, signal = null) => {
+    chatWithNayaxa: async (userMessage, files, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '', nama_instansi = 'N/A', personaPromptSnippet = '', userProfile = null, lastActivityContext = null, coding_mode = false, session_id = null, onStepCallback = null, signal = null, customTools = null) => {
         if (signal?.aborted) return 'Request aborted.';
         try {
             // --- STANDALONE GREETING INTERCEPTOR (v4.6.5) ---
             const cleanMsg = (userMessage || '').trim().toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g,"");
-            const greetings = ['hi', 'hi nayaxa', 'halo', 'hallo', 'hei', 'hey', 'p', 'ping', 'pagi', 'siang', 'sore', 'malam', 'assalamualaikum', 'selamat pagi', 'selamat siang', 'selamat sore', 'selamat malam', 'halo nayaxa', 'hallo nayaxa'];
-            
-            if (greetings.includes(cleanMsg) && (!files || files.length === 0)) {
+            const greetings = ['hi', 'hi nayaxa', 'halo', 'hallo', 'hei', 'hey', 'p', 'ping', 'pagi', 'siang', 'sore', 'malam', 'assalamualaikum', 'selamat pagi', 'selamat siang', 'selamat sore', 'selamat malam', 'halo nayaxa', 'hallo nayaxa'];            if (greetings.includes(cleanMsg) && (!files || files.length === 0)) {
                 console.log(`[DeepSeek] Standalone greeting detected: "${userMessage}". Intercepting and returning local response instantly.`);
                 
                 // Personalize based on profile or name
                 const displayName = userProfile?.nama_lengkap || user_name || "Sobat Nayaxa";
                 const formality = userProfile?.detected_formality || "Formal";
                 
+                // Time-aware greeting based on fullDate
+                let salamWaktu = "Halo";
+                if (fullDate) {
+                    const hourMatch = fullDate.match(/pukul\s*(\d{1,2})\.(\d{2})|(\d{1,2}):(\d{2})/i);
+                    if (hourMatch) {
+                        const hour = parseInt(hourMatch[1] || hourMatch[3], 10);
+                        if (hour >= 4 && hour < 11) salamWaktu = "Selamat pagi";
+                        else if (hour >= 11 && hour < 15) salamWaktu = "Selamat siang";
+                        else if (hour >= 15 && hour < 19) salamWaktu = "Selamat sore";
+                        else salamWaktu = "Selamat malam";
+                    }
+                }
+
+                // Sapaan kehormatan berdasarkan jenis kelamin
+                let sapaan = "Bapak/Ibu";
+                if (userProfile?.jenis_kelamin) {
+                    const jk = userProfile.jenis_kelamin.toLowerCase();
+                    if (jk.startsWith('p') || jk.includes('wanita') || jk.includes('perempuan')) sapaan = "Ibu";
+                    else if (jk.startsWith('l') || jk.includes('pria') || jk.includes('laki')) sapaan = "Bapak";
+                }
+                
                 let reply = "";
                 if (formality === "Akrab" || formality === "Casual" || cleanMsg === 'p' || cleanMsg === 'ping') {
-                    reply = `Halo **${displayName}**! Senang banget bisa menyapa kamu secara instan! Ada yang bisa aku bantu terkait analisis dokumen, grafik, atau data Bapperida hari ini? 😊`;
+                    reply = `${salamWaktu}, **${displayName}**! Senang banget bisa menyapa kamu secara instan! Ada yang bisa aku bantu terkait analisis dokumen, grafik, atau data Bapperida hari ini?`;
                 } else if (cleanMsg === 'assalamualaikum') {
-                    reply = `Wa'alaikumussalam Wr. Wb. Halo **${displayName}**! Ada yang bisa saya bantu terkait data instansi, grafik analitik, atau analisis dokumen Bapperida hari ini?`;
+                    reply = `Wa'alaikumussalam Wr. Wb. ${salamWaktu}, ${sapaan} **${displayName}**! Ada yang bisa saya bantu terkait data instansi, grafik analitik, atau analisis dokumen Bapperida hari ini?`;
                 } else {
-                    reply = `Halo **${displayName}**! Senang sekali bisa menyapa Anda kembali secara instan. Saya, Nayaxa, asisten AI Bapperida siap membantu Anda. Apakah ada dokumen yang ingin dianalisis, grafik yang ingin dibuat, atau kueri data yang ingin dijalankan hari ini?`;
+                    reply = `${salamWaktu}, ${sapaan} **${displayName}**! Senang sekali bisa menyapa Anda kembali secara instan. Saya, Nayaxa, asisten AI Bapperida siap membantu Anda. Apakah ada dokumen yang ingin dianalisis, grafik yang ingin dibuat, atau kueri data yang ingin dijalankan hari ini?`;
                 }
 
                 // Simulate progressive streaming for premium UX!
@@ -951,6 +972,12 @@ const nayaxaDeepSeekService = {
             ${personaPromptSnippet}
             ${lastActivityContext ? `\nKONTEKS AKTIVITAS TERAKHIR USER: "${lastActivityContext}"\nSapa user dengan hangat dan hubungkan kalimat pembuka/pertanyaan Anda dengan aktivitas tersebut secara proaktif (Predictive Greeting).\n` : ''}
             WAKTU AKTIF: ${fullDate}. Selalu gunakan nilai ini sebagai filter waktu default dan referensi sapaan waktu (Pagi/Siang/Sore/Malam).
+            ATURAN SALAM PEMBUKA BERDASARKAN WAKTU (WAJIB DIPATUHI): Periksa jam pada WAKTU AKTIF di atas sebelum memberikan salam pembuka. Gunakan panduan berikut secara ketat:
+            - Pukul 04:00 s.d. 10:59: "Selamat pagi"
+            - Pukul 11:00 s.d. 14:59: "Selamat siang"
+            - Pukul 15:00 s.d. 18:29: "Selamat sore"
+            - Pukul 18:30 s.d. 03:59: "Selamat malam"
+            DILARANG keras memberikan salam yang tidak sesuai jam aktif (misalnya menyapa dengan "Selamat siang" pada pukul 23:00 malam).
 
             PENTING - ADAPTASI FORMALITAS: Sesuaikan tingkat formalitas Anda dengan Profil Kepribadian User di atas. Jika user terbiasa santai (Gue/Lo, Gw/Lu, Ane/Ente), Anda diperbolehkan menggunakan gaya bicara yang serupa (casual-professional) namun tetap sopan, ceria, dan membantu. Jangan gunakan emoji. Jika user formal, tetaplah sangat formal (Saya/Anda).
             
@@ -1108,17 +1135,28 @@ PENTING - ADAPTASI FORMALITAS: Sesuaikan tingkat formalitas Anda dengan Profil K
             
             WAKTU SEKARANG: ${fullDate || `Bulan ${month}, Tahun ${year}`}.
             REFERENSI SAPAAN: Gunakan jam di atas untuk menentukan sapaan (Pagi/Siang/Sore/Malam).
-            BULAN AKTIF: ${month}, TAHUN AKTIF: ${year}. Gunakan nilai ini secara otomatis untuk semua query berbasis waktu.
-            
-            ${userProfile ? `
+            BULAN AKTIF: ${month}, TAHUN AKTIF: ${year}. Gunakan nilai ini secara otomatis untuk semua query berbasis waktu.            ${userProfile ? (() => {
+                let sapaan = 'Bapak/Ibu';
+                if (userProfile.jenis_kelamin) {
+                    const jk = userProfile.jenis_kelamin.toLowerCase();
+                    if (jk.startsWith('p') || jk.includes('wanita') || jk.includes('perempuan')) {
+                        sapaan = 'Ibu';
+                    } else if (jk.startsWith('l') || jk.includes('pria') || jk.includes('laki')) {
+                        sapaan = 'Bapak';
+                    }
+                }
+                return `
 PROFIL USER:
 - Nama: ${userProfile.nama_lengkap || user_name}
 - Jabatan: ${userProfile.jabatan || 'N/A'}
 - Bidang: ${userProfile.bidang || 'N/A'} (ID: ${userProfile.bidang_id || 'NULL'})
 - Instansi: ${userProfile.nama_instansi || nama_instansi}
+- Jenis Kelamin: ${userProfile.jenis_kelamin || 'N/A'}
+- Sapaan Kehormatan: ${sapaan}
 
-ATURAN: Gunakan profil ini untuk menyesuaikan jawaban. Jika user menyebut "bidang saya", gunakan bidang "${userProfile.bidang || 'N/A'}".
-` : `
+ATURAN: Gunakan profil ini untuk menyesuaikan jawaban. Jika user menyebut "bidang saya", gunakan bidang "${userProfile.bidang || 'N/A'}". Anda WAJIB memanggil user dengan sapaan "${sapaan}" secara konsisten dan dilarang menyapanya dengan sebutan lain yang tidak sesuai jenis kelamin.
+`;
+            })() : `
 PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
 `}
             
@@ -1313,11 +1351,11 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                 });
             } else {
                 messages.push({ role: "user", content: userTextPart });
-            }
-
-            const activeTools = coding_mode 
-                ? [...(dynamicEngine.dynamicTools || DEEPSEEK_TOOLS), ...CODING_AGENT_TOOLS] 
-                : (dynamicEngine.dynamicTools || DEEPSEEK_TOOLS);
+            }            const activeTools = customTools 
+                ? customTools 
+                : (coding_mode 
+                    ? [...(dynamicEngine.dynamicTools || DEEPSEEK_TOOLS), ...CODING_AGENT_TOOLS] 
+                    : (dynamicEngine.dynamicTools || DEEPSEEK_TOOLS));
 
             const targetModel = process.env.DEEPSEEK_MODEL || dynamicEngine.configMap.DEFAULT_LLM_MODEL || "deepseek-v4-flash";
 
@@ -1644,5 +1682,8 @@ async function generateMasterSummaryInBackground(fileHash, fileName, extractedTe
     }
 }
 
-module.exports = nayaxaDeepSeekService;
+module.exports = {
+    ...nayaxaDeepSeekService,
+    DEEPSEEK_TOOLS
+};
 

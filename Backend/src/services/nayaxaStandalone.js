@@ -369,7 +369,7 @@ ${dynamicGlossary}`;
             // 1. Fetch Basic Profile
             const [rows] = await pool.query(`
                 SELECT 
-                    p.id, p.nama_lengkap, p.nip, p.bidang_id,
+                    p.id, p.nama_lengkap, p.nip, p.bidang_id, p.jenis_kelamin,
                     b.nama_bidang as bidang, 
                     j.jabatan,
                     i.instansi as nama_instansi
@@ -382,14 +382,14 @@ ${dynamicGlossary}`;
             `, [profil_id]);
             
             let profile = null;
-
+ 
             if (rows.length === 0) {
                 // 2. SMART FALLBACK: If ID lookup fails, try matching by Nama Lengkap (if provided)
                 if (user_name) {
                     console.log(`[Nayaxa] Profile ID ${profil_id} not found. Attempting Smart Lookup for: ${user_name}`);
                     const [nameRows] = await pool.query(`
                         SELECT 
-                            p.id, p.nama_lengkap, p.nip, p.bidang_id,
+                            p.id, p.nama_lengkap, p.nip, p.bidang_id, p.jenis_kelamin,
                             b.nama_bidang as bidang, 
                             j.jabatan,
                             i.instansi as nama_instansi

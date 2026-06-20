@@ -443,12 +443,12 @@ const toolFunctions = {
     execute_sql_query: async ({ query }) => {
         const jsonResult = await nayaxaStandalone.executeReadOnlyQuery(query);
         return { database_result: jsonResult };
-    },
-    generate_document: async ({ format, content, filename, options }, { baseUrl }) => {
+    },    generate_document: async ({ format, content, filename, options }, { baseUrl }) => {
         try {
+            const docFilename = filename || 'dokumen';
             // --- ANTI-HALLUCINATION GUARDRAIL ---
             // Jika AI mencoba memanggil tool Word untuk PPTX, tolak secara paksa di level kode.
-            if (filename.toLowerCase().endsWith('.pptx') || filename.toLowerCase().includes('presentasi') || filename.toLowerCase().includes('paparan')) {
+            if (docFilename.toLowerCase().endsWith('.pptx') || docFilename.toLowerCase().includes('presentasi') || docFilename.toLowerCase().includes('paparan')) {
                 console.error(`[Guardrail] AI mencoba membuat PPTX menggunakan tool Word. Menolak pemanggilan.`);
                 return { 
                     success: false, 
@@ -456,16 +456,18 @@ const toolFunctions = {
                 };
             }
 
-            const downloadPath = await (format === 'excel' ? exportService.generateExcel(content, filename) :
-                                format === 'pdf' ? exportService.generatePDF(content, filename) :
-                                exportService.generateWord(content, filename, options));
+            const docFormat = format || (docFilename.toLowerCase().endsWith('.xlsx') || docFilename.toLowerCase().endsWith('.xls') ? 'excel' : docFilename.toLowerCase().endsWith('.pdf') ? 'pdf' : 'word');
+
+            const downloadPath = await (docFormat === 'excel' ? exportService.generateExcel(content, docFilename) :
+                                docFormat === 'pdf' ? exportService.generatePDF(content, docFilename) :
+                                exportService.generateWord(content, docFilename, options));
             
             const downloadUrl = downloadPath.startsWith('http') ? downloadPath : `${baseUrl}${downloadPath}`;
             
             return { 
                 success: true, 
                 download_url: downloadUrl, 
-                message: `File ${format.toUpperCase()} '${filename}' berhasil dibuat. JANGAN tuliskan link download di jawaban Anda, karena sistem sudah menampilkannya secara otomatis melalui tombol.` 
+                message: `File ${docFormat.toUpperCase()} '${docFilename}' berhasil dibuat. JANGAN tuliskan link download di jawaban Anda, karena sistem sudah menampilkannya secara otomatis melalui tombol.` 
             };
         } catch (err) {
             console.error('[DocumentTool] Error:', err);
@@ -838,7 +840,7 @@ const retrieveHybridContext = async (fileHash, query, onStepCallback = null) => 
 
 const nayaxaGeminiService = {
 
-    chatWithNayaxa: async (userMessage, files, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '', nama_instansi = 'N/A', personaPromptSnippet = '', userProfile = null, lastActivityContext = null, coding_mode = false, session_id = null, onStepCallback = null, signal = null, keyPreference = false) => {
+    chatWithNayaxa: async (userMessage, files, instansi_id, month, year, prevHistory = [], user_name = "Pengguna", profil_id = null, fileContext = '', current_page = '', page_title = '', baseUrl = '', fullDate = '', nama_instansi = 'N/A', personaPromptSnippet = '', userProfile = null, lastActivityContext = null, coding_mode = false, session_id = null, onStepCallback = null, signal = null, keyPreference = false, customTools = null) => {
         // keyPreference can be: true (Paid), false (Auto), 'Gemini Paid', or 'Gemini Free'
         let preferredType = null;
         if (keyPreference === true || keyPreference === 'Gemini Paid') preferredType = 'Gemini Paid';
@@ -864,16 +866,25 @@ const nayaxaGeminiService = {
         if (needSchema) {
             schemaMapString = await nayaxaStandalone.getDatabaseSchema();
             glossaryString = await nayaxaStandalone.getMasterDataGlossary();
-        }
-
-        // Format identity string
+        }        // Format identity string
         let identitasUser = `Nama: ${user_name}, Instansi: ${nama_instansi} (ID: ${instansi_id}).`;
         if (userProfile) {
+            let sapaan = 'Bapak/Ibu';
+            if (userProfile.jenis_kelamin) {
+                const jk = userProfile.jenis_kelamin.toLowerCase();
+                if (jk.startsWith('p') || jk.includes('wanita') || jk.includes('perempuan')) {
+                    sapaan = 'Ibu';
+                } else if (jk.startsWith('l') || jk.includes('pria') || jk.includes('laki')) {
+                    sapaan = 'Bapak';
+                }
+            }
             identitasUser += ` 
             DETAIL PROFIL:
             - Bidang: ${userProfile.bidang || 'N/A'}
             - Jabatan: ${userProfile.jabatan || 'N/A'}
             - Nama Instansi: ${userProfile.nama_instansi || nama_instansi}
+            - Jenis Kelamin: ${userProfile.jenis_kelamin || 'N/A'}
+            - Sapaan Kehormatan: ${sapaan}
             - Instansi yang Diampu: ${Array.isArray(userProfile.instansi_diampu) && userProfile.instansi_diampu.length > 0 ? userProfile.instansi_diampu.join(', ') : (typeof userProfile.instansi_diampu === 'string' ? userProfile.instansi_diampu : 'Tidak ada data pengampuan instansi.')}
             - Urusan/Tugas yang Diampu: ${Array.isArray(userProfile.urusan_diampu) && userProfile.urusan_diampu.length > 0 ? userProfile.urusan_diampu.join(', ') : (typeof userProfile.urusan_diampu === 'string' ? userProfile.urusan_diampu : 'Tidak ada data pengampuan urusan.')}`;
         }
@@ -1002,11 +1013,10 @@ ${nayaxaPromptService.getNayaxaProtokolPrompt()}
         const maxAttempts = preferredType === 'Gemini Paid' ? 1 : 5; // Increased retry for Free keys to utilize the pool better
         while (attempts < maxAttempts) {
             try {
-                const genAI = new GoogleGenerativeAI(apiKey);
-                const model = genAI.getGenerativeModel({ 
+                const genAI = new GoogleGenerativeAI(apiKey);                 const model = genAI.getGenerativeModel({ 
                     model: currentModelName, 
                     systemInstruction: systemInstruction, 
-                    tools: nayaxaTools,
+                    tools: customTools ? customTools : nayaxaTools,
                     safetySettings: safetySettings
                 });
 
@@ -1171,10 +1181,34 @@ ${nayaxaPromptService.getNayaxaProtokolPrompt()}
                                 `DATA FILE (ERROR) - NAMA FILE: "${fileName}":\nGagal memproses file: ${err.message}.`;
                         }
                     }
+                }                const parts = [];
+                let userText = userMessage;
+
+                let unsupportedWarnings = [];
+                for (const file of attachmentList) {
+                    const { mimeType } = file;
+                    if (!mimeType) continue;
+                    const extension = file.name ? file.name.split('.').pop().toLowerCase() : '';
+                    const isExcel = mimeType?.includes('spreadsheetml') || mimeType?.includes('excel') || mimeType?.includes('officedocument.spreadsheetml.sheet');
+                    const isCSV = mimeType?.includes('csv');
+                    const isPDF = mimeType?.includes('pdf') || extension === 'pdf';
+                    const isDoc = isExcel || isCSV || extension === 'xlsx' || extension === 'xls' || extension === 'csv' ||
+                                  mimeType?.includes('wordprocessingml') || mimeType?.includes('msword') || extension === 'docx' || extension === 'doc' ||
+                                  isPDF || extension === 'txt' || mimeType?.includes('text/plain');
+                    const isSupportedInline = 
+                        mimeType?.startsWith('image/') || 
+                        mimeType?.startsWith('audio/') || 
+                        mimeType?.startsWith('video/') ||
+                        (isPDF && file._useVisionFallback);
+
+                    if (!isDoc && !isSupportedInline) {
+                        unsupportedWarnings.push(`Berkas "${file.name}" (.${extension}) tidak dapat dibaca karena format PPTX/Presentasi atau format tidak dikenal belum didukung untuk ekstraksi teks secara langsung. Anda WAJIB memberitahu pengguna secara ramah dan menyarankan untuk mengonversinya ke format PDF terlebih dahulu.`);
+                    }
                 }
 
-                const parts = [];
-                let userText = userMessage;
+                if (unsupportedWarnings.length > 0) {
+                    userText = `${userText}\n\n[SISTEM - PERINGATAN FORMAT DOKUMEN]:\n${unsupportedWarnings.join('\n')}`;
+                }
 
                 const combinedFileContext = (fileContext || '') + (localFileContext || '');
                 if (combinedFileContext) {
@@ -1193,12 +1227,19 @@ ${nayaxaPromptService.getNayaxaProtokolPrompt()}
                                   mimeType?.includes('wordprocessingml') || mimeType?.includes('msword') || extension === 'docx' || extension === 'doc' ||
                                   isPDF || extension === 'txt' || mimeType?.includes('text/plain');
 
-                    // Kirimkan sebagai inlineData jika: (1) bukan dokumen teks (gambar dll), atau
-                    // (2) PDF yang ditandai sebagai scan/gambar (vision fallback)
-                    if (!isDoc || (isPDF && file._useVisionFallback)) {
+                    const isSupportedInline = 
+                        mimeType?.startsWith('image/') || 
+                        mimeType?.startsWith('audio/') || 
+                        mimeType?.startsWith('video/') ||
+                        (isPDF && file._useVisionFallback);
+
+                    // Kirimkan sebagai inlineData jika didukung oleh Gemini secara langsung
+                    if (isSupportedInline) {
                         parts.push({
                             inlineData: { mimeType: mimeType, data: base64.split('base64,')[1] || base64 }
                         });
+                    } else if (!isDoc) {
+                        console.warn(`[Gemini] File "${file.name}" dengan MIME "${mimeType}" diabaikan sebagai inlineData untuk mencegah error 400.`);
                     }
                 }
 
@@ -1208,7 +1249,7 @@ ${nayaxaPromptService.getNayaxaProtokolPrompt()}
                 const chat = model.startChat({ history: history, generationConfig: { maxOutputTokens: 8192 } });
                 
                 // Use streaming version to show typing effect character-by-character
-                let resultStream = await chat.sendMessageStream(parts, { signal });
+                let resultStream = await chat.sendMessageStream(parts, signal ? { signal } : undefined);
                 let responseText = "";
                 try {
                     for await (const chunk of resultStream.stream) {
@@ -1279,7 +1320,7 @@ ${nayaxaPromptService.getNayaxaProtokolPrompt()}
                         });
                     }
                     try {
-                        resultStream = await chat.sendMessageStream(callResponses, { signal });
+                        resultStream = await chat.sendMessageStream(callResponses, signal ? { signal } : undefined);
                         for await (const chunk of resultStream.stream) {
                             try {
                                 const text = chunk.text();

@@ -191,14 +191,25 @@ export default function NayaxaAssistant({
       cleaned = cleaned.replace(/(https?:\/\/)?bapperida-ppm\.my\.id:6001/g, 'https://api-nayaxa.bapperida-ppm.my.id');
       
       return cleaned;
-    };
+    };    const offset = -new Date().getTimezoneOffset() / 60;
+    let tzSuffix = 'WIB';
+    if (offset === 8) tzSuffix = 'WITA';
+    else if (offset === 9) tzSuffix = 'WIT';
+    else if (offset > 0) tzSuffix = `GMT+${offset}`;
+    else if (offset < 0) tzSuffix = `GMT${offset}`;
+
+    const clientTimeFormatted = new Date().toLocaleDateString('id-ID', { 
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: false
+    }) + ' ' + tzSuffix;
 
     api.chatStream({
       message: msg,
       session_id: sessionId,
       user_id: 7, 
       user_name: 'Widget User',
-      files: attachments
+      files: attachments,
+      client_time: clientTimeFormatted
     }, (event, data) => {
       if (event === 'step') {
         setCurrentSteps(prev => [...prev, data]);

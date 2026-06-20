@@ -177,10 +177,23 @@ export default function Chat() {
     setActiveSteps([]);
     setThinkingBrain('DeepSeek');
     if (abortControllerRef.current) abortControllerRef.current.abort();
-    abortControllerRef.current = new AbortController();
-    try {
+    abortControllerRef.current = new AbortController();    try {
       setStreamingContent('');
       setThinkingThought('');
+
+      // Dynamically format client time with timezone offset suffix (WIB, WITA, WIT, GMT)
+      const offset = -new Date().getTimezoneOffset() / 60;
+      let tzSuffix = 'WIB';
+      if (offset === 8) tzSuffix = 'WITA';
+      else if (offset === 9) tzSuffix = 'WIT';
+      else if (offset > 0) tzSuffix = `GMT+${offset}`;
+      else if (offset < 0) tzSuffix = `GMT${offset}`;
+
+      const clientTimeFormatted = new Date().toLocaleDateString('id-ID', { 
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: false
+      }) + ' ' + tzSuffix;
+
       const res = await api.chatStream(
         {
           message: msg,
@@ -190,7 +203,8 @@ export default function Chat() {
           profil_id: currentUser?.id,
           instansi_id: INSTANSI_ID,
           coding_mode: codingMode,
-          files: attachments
+          files: attachments,
+          client_time: clientTimeFormatted
         },
         (step) => {
           setActiveSteps(prev => {
