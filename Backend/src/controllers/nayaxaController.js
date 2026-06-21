@@ -592,6 +592,7 @@ const nayaxaController = {
         try {
             const { user_id } = req.query;
             const app_id = req.nayaxaApp.id;
+            console.log('[Sessions] getChatSessions request:', { user_id, app_id, query: req.query });
             const [rows] = await dbNayaxa.query(
                 `SELECT 
                     h.session_id, 
