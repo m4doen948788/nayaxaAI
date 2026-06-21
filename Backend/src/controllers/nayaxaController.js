@@ -260,22 +260,24 @@ const nayaxaController = {
 
             // --- FETCH METADATA FOR ROUTING ---
             const now = new Date();
-            const serverMonth = now.getMonth() + 1;
-            const serverYear = now.getFullYear();
+            const defaultMonth = parseInt(now.toLocaleDateString('en-US', { timeZone: 'Asia/Jakarta', month: 'numeric' }), 10);
+            const defaultYear = parseInt(now.toLocaleDateString('en-US', { timeZone: 'Asia/Jakarta', year: 'numeric' }), 10);
+            const defaultFullDate = now.toLocaleDateString('id-ID', { 
+                timeZone: 'Asia/Jakarta',
+                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+                hour: '2-digit', minute: '2-digit', hour12: false
+            }) + ' WIB';
 
             // Extract month and year from client_time if provided
-            let month = serverMonth;
-            let year = serverYear;
+            let month = defaultMonth;
+            let year = defaultYear;
             const parsedClientDate = parseClientDate(client_time);
             if (parsedClientDate) {
                 month = parsedClientDate.month;
                 year = parsedClientDate.year;
             }
 
-            const fullDate = client_time || (now.toLocaleDateString('id-ID', { 
-                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-                hour: '2-digit', minute: '2-digit', hour12: false
-            }) + ' WIB');
+            const fullDate = client_time || defaultFullDate;
 
             const baseUrl = buildExportDownloadUrl(req, '');
 
@@ -392,19 +394,10 @@ const nayaxaController = {
 
             console.log(`[Trace] Fetching persona and profile data...`);
             const now = new Date();
-            const serverMonth = now.getMonth() + 1;
-            const serverYear = now.getFullYear();
-
-            // Extract month and year from client_time if provided
-            let month = serverMonth;
-            let year = serverYear;
-            const parsedClientDate = parseClientDate(client_time);
-            if (parsedClientDate) {
-                month = parsedClientDate.month;
-                year = parsedClientDate.year;
-            }
-
-            const fullDate = client_time || (now.toLocaleDateString('id-ID', { 
+            const defaultMonth = parseInt(now.toLocaleDateString('en-US', { timeZone: 'Asia/Jakarta', month: 'numeric' }), 10);
+            const defaultYear = parseInt(now.toLocaleDateString('en-US', { timeZone: 'Asia/Jakarta', year: 'numeric' }), 10);
+            const defaultFullDate = now.toLocaleDateString('id-ID', { 
+                timeZone: 'Asia/Jakarta',
                 weekday: 'long', 
                 year: 'numeric', 
                 month: 'long', 
@@ -412,7 +405,18 @@ const nayaxaController = {
                 hour: '2-digit',
                 minute: '2-digit',
                 hour12: false
-            }) + ' WIB');
+            }) + ' WIB';
+
+            // Extract month and year from client_time if provided
+            let month = defaultMonth;
+            let year = defaultYear;
+            const parsedClientDate = parseClientDate(client_time);
+            if (parsedClientDate) {
+                month = parsedClientDate.month;
+                year = parsedClientDate.year;
+            }
+
+            const fullDate = client_time || defaultFullDate;
 
             const baseUrl = buildExportDownloadUrl(req, '');
 
