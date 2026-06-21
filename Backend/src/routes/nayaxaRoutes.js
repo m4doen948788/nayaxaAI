@@ -41,6 +41,19 @@ router.get('/api/nayaxa/debug-exports', (req, res) => {
     }
 });
 
+// Temporary debug endpoint to check latest chat history rows in VPS database
+router.get('/api/nayaxa/debug-history', async (req, res) => {
+    try {
+        const dbNayaxa = require('../config/dbNayaxa');
+        const [rows] = await dbNayaxa.query(
+            "SELECT id, app_id, user_id, session_id, role, SUBSTRING(content, 1, 50) as content, created_at FROM nayaxa_chat_history ORDER BY id DESC LIMIT 20"
+        );
+        res.json({ success: true, rows });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // Public Static Files (For previews in iframes/links)
 // Public Routes for Static Files (Dashboard Uploads & System Uploads)
 router.use('/uploads/dashboard', expressStatic(DASHBOARD_UPLOADS));
