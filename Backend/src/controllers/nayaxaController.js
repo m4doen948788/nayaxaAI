@@ -615,6 +615,7 @@ const nayaxaController = {
                  LIMIT 15`,
                 [app_id, user_id]
             );
+            console.log('[Sessions] getChatSessions result length:', rows.length, 'rows:', rows);
             res.json({ success: true, sessions: rows });
         } catch (err) { res.status(500).json({ success: false, message: err.message }); }
     },
