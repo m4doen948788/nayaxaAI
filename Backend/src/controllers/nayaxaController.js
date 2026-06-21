@@ -593,6 +593,7 @@ const nayaxaController = {
             const { user_id } = req.query;
             const app_id = req.nayaxaApp.id;
             console.log('[Sessions] getChatSessions request:', { user_id, app_id, query: req.query });
+            const userIdInt = parseInt(user_id, 10) || 0;
             const [rows] = await dbNayaxa.query(
                 `SELECT 
                     h.session_id, 
@@ -613,11 +614,14 @@ const nayaxaController = {
                  GROUP BY h.session_id
                  ORDER BY is_pinned DESC, last_msg DESC 
                  LIMIT 15`,
-                [app_id, user_id]
+                [app_id, userIdInt]
             );
             console.log('[Sessions] getChatSessions result length:', rows.length, 'rows:', rows);
             res.json({ success: true, sessions: rows });
-        } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+        } catch (err) {
+            console.error('[Sessions] getChatSessions error:', err);
+            res.status(500).json({ success: false, message: err.message });
+        }
     },
 
     togglePinSession: async (req, res) => {
