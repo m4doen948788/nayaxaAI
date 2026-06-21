@@ -602,14 +602,14 @@ const nayaxaController = {
                         NULLIF(MAX(s.title), ''), 
                         SUBSTRING((
                             SELECT content FROM nayaxa_chat_history 
-                            WHERE session_id = h.session_id 
+                            WHERE session_id = h.session_id COLLATE utf8mb4_unicode_ci
                             ORDER BY id ASC LIMIT 1
                         ), 1, 50)
                     ) as title,
                     (MAX(p.id) IS NOT NULL) as is_pinned
                  FROM nayaxa_chat_history h 
-                 LEFT JOIN nayaxa_chat_sessions s ON h.session_id = s.session_id
-                 LEFT JOIN nayaxa_pinned_sessions p ON h.session_id = p.session_id AND p.user_id = h.user_id
+                 LEFT JOIN nayaxa_chat_sessions s ON h.session_id = s.session_id COLLATE utf8mb4_unicode_ci
+                 LEFT JOIN nayaxa_pinned_sessions p ON h.session_id = p.session_id COLLATE utf8mb4_unicode_ci AND p.user_id = h.user_id
                  WHERE h.app_id = ? AND h.user_id = ? 
                  GROUP BY h.session_id
                  ORDER BY is_pinned DESC, last_msg DESC 

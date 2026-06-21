@@ -258,6 +258,18 @@ async function migrate() {
             db: dbDashboard,
             alterSql: `ALTER TABLE dokumen_upload ADD COLUMN is_indexed TINYINT(1) DEFAULT 0`,
             ignoreCodes: ['ER_DUP_FIELDNAME', 'ER_DUP_COLUMN_NAME', 'ER_NO_SUCH_TABLE']
+        },
+        {
+            name: 'nayaxa_chat_sessions.session_id_collation',
+            db: dbNayaxa,
+            alterSql: `ALTER TABLE nayaxa_chat_sessions MODIFY session_id VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL`,
+            ignoreCodes: []
+        },
+        {
+            name: 'nayaxa_pinned_sessions.session_id_collation',
+            db: dbNayaxa,
+            alterSql: `ALTER TABLE nayaxa_pinned_sessions MODIFY session_id VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL`,
+            ignoreCodes: []
         }
     ];
 
