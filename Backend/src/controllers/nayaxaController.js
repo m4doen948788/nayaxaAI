@@ -69,6 +69,51 @@ const buildExportDownloadUrl = (req, downloadPath) => {
     return `${base}${downloadPath}`;
 };
 
+/**
+ * Parses client_time string (e.g. "Sabtu, 20 Juni 2026 23:32 WIB") to extract month and year.
+ * Returns { month, year } or null if parsing fails.
+ */
+const parseClientDate = (clientTimeStr) => {
+    if (!clientTimeStr) return null;
+    try {
+        const yearMatch = clientTimeStr.match(/\b(20\d{2})\b/);
+        const year = yearMatch ? parseInt(yearMatch[1], 10) : null;
+
+        const months = [
+            'januari', 'februari', 'maret', 'april', 'mei', 'juni',
+            'juli', 'agustus', 'september', 'oktober', 'november', 'desember'
+        ];
+        const lowerStr = clientTimeStr.toLowerCase();
+        let month = null;
+        for (let i = 0; i < months.length; i++) {
+            if (lowerStr.includes(months[i])) {
+                month = i + 1;
+                break;
+            }
+        }
+
+        if (!month) {
+            const enMonths = [
+                'january', 'february', 'march', 'april', 'may', 'june',
+                'july', 'august', 'september', 'october', 'november', 'december'
+            ];
+            for (let i = 0; i < enMonths.length; i++) {
+                if (lowerStr.includes(enMonths[i])) {
+                    month = i + 1;
+                    break;
+                }
+            }
+        }
+
+        if (year && month) {
+            return { month, year };
+        }
+    } catch (e) {
+        console.error('[Time] Error parsing client_time:', e.message);
+    }
+    return null;
+};
+
 const nayaxaController = {
     /**
      * Get Widget Prompts
@@ -166,7 +211,7 @@ const nayaxaController = {
             message, fileBase64, fileMimeType, files,
             user_id, user_name, profil_id, instansi_id,
             session_id, current_page, page_title,
-            coding_mode  // ← Coding Agent flag. Only sent by standalone Nayaxa frontend. Widget never sends this.
+            coding_mode, client_time // ← aligned client_time parameter
         } = req.body;
 
         // Support both old single-file and new multi-file format
@@ -215,12 +260,22 @@ const nayaxaController = {
 
             // --- FETCH METADATA FOR ROUTING ---
             const now = new Date();
-            const month = now.getMonth() + 1;
-            const year = now.getFullYear();
-            const fullDate = now.toLocaleDateString('id-ID', { 
+            const serverMonth = now.getMonth() + 1;
+            const serverYear = now.getFullYear();
+
+            // Extract month and year from client_time if provided
+            let month = serverMonth;
+            let year = serverYear;
+            const parsedClientDate = parseClientDate(client_time);
+            if (parsedClientDate) {
+                month = parsedClientDate.month;
+                year = parsedClientDate.year;
+            }
+
+            const fullDate = client_time || (now.toLocaleDateString('id-ID', { 
                 weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
                 hour: '2-digit', minute: '2-digit', hour12: false
-            }) + ' WIB';
+            }) + ' WIB');
 
             const baseUrl = buildExportDownloadUrl(req, '');
 
@@ -291,7 +346,8 @@ const nayaxaController = {
         const {
             message, files,
             user_id, user_name, profil_id, instansi_id,
-            session_id, current_page, page_title, coding_mode
+            session_id, current_page, page_title, coding_mode,
+            client_time // ← aligned client_time parameter
         } = req.body;
 
         const attachmentList = files || [];
@@ -336,9 +392,19 @@ const nayaxaController = {
 
             console.log(`[Trace] Fetching persona and profile data...`);
             const now = new Date();
-            const month = now.getMonth() + 1;
-            const year = now.getFullYear();
-            const fullDate = now.toLocaleDateString('id-ID', { 
+            const serverMonth = now.getMonth() + 1;
+            const serverYear = now.getFullYear();
+
+            // Extract month and year from client_time if provided
+            let month = serverMonth;
+            let year = serverYear;
+            const parsedClientDate = parseClientDate(client_time);
+            if (parsedClientDate) {
+                month = parsedClientDate.month;
+                year = parsedClientDate.year;
+            }
+
+            const fullDate = client_time || (now.toLocaleDateString('id-ID', { 
                 weekday: 'long', 
                 year: 'numeric', 
                 month: 'long', 
@@ -346,7 +412,7 @@ const nayaxaController = {
                 hour: '2-digit',
                 minute: '2-digit',
                 hour12: false
-            }) + ' WIB';
+            }) + ' WIB');
 
             const baseUrl = buildExportDownloadUrl(req, '');
 
@@ -534,12 +600,12 @@ const nayaxaController = {
                             ORDER BY id ASC LIMIT 1
                         ), 1, 50)
                     ) as title,
-                    (p.id IS NOT NULL) as is_pinned
+                    (MAX(p.id) IS NOT NULL) as is_pinned
                  FROM nayaxa_chat_history h 
                  LEFT JOIN nayaxa_chat_sessions s ON h.session_id = s.session_id
                  LEFT JOIN nayaxa_pinned_sessions p ON h.session_id = p.session_id AND p.user_id = h.user_id
                  WHERE h.app_id = ? AND h.user_id = ? 
-                 GROUP BY h.session_id, p.id
+                 GROUP BY h.session_id
                  ORDER BY is_pinned DESC, last_msg DESC 
                  LIMIT 15`,
                 [app_id, user_id]

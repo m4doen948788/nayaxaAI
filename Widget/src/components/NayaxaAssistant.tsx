@@ -206,8 +206,8 @@ export default function NayaxaAssistant({
     api.chatStream({
       message: msg,
       session_id: sessionId,
-      user_id: 7, 
-      user_name: 'Widget User',
+      user_id: user?.id || 7, 
+      user_name: user?.nama_lengkap || user?.name || 'Widget User',
       files: attachments,
       client_time: clientTimeFormatted
     }, (event, data) => {
