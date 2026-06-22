@@ -5,24 +5,6 @@ const fs = require('fs');
 const path = require('path');
 const dbNayaxa = require('../config/dbNayaxa');
 
-// Helper to initialize planning lifecycle database table
-const initPlanningDb = async () => {
-    try {
-        await dbNayaxa.query(`
-            CREATE TABLE IF NOT EXISTS nayaxa_planning_lifecycle (
-                session_id VARCHAR(255) PRIMARY KEY,
-                state VARCHAR(50) NOT NULL,
-                original_prompt TEXT NOT NULL,
-                proposed_plan TEXT NOT NULL,
-                attachments_json LONGTEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-        `);
-    } catch (e) {
-        console.error('[Routing] Failed to initialize planning DB:', e.message);
-    }
-};
 
 // Helper to compile active user profile and job responsibilities context
 const compileUserContext = (userProfile, userName, namaInstansi) => {
@@ -100,8 +82,6 @@ const nayaxaRoutingService = {
             coding_mode, activeSessionId, onStepCallback, signal
         } = params;
 
-        // Ensure database table is initialized
-        await initPlanningDb();
 
         // Configuration: Check DeepSeek availability from DB (same source as superadmin page)
         let isDeepSeekEnabled = false;
@@ -175,62 +155,7 @@ const nayaxaRoutingService = {
             };
         };
 
-        const generateProposedPlan = async (userQuery) => {
-            let glossaryContext = "";
-            try {
-                const nayaxaStandalone = require('./nayaxaStandalone');
-                glossaryContext = await nayaxaStandalone.getMasterDataGlossary();
-            } catch (glossErr) {
-                console.warn('[Routing] Failed to load glossary for planning:', glossErr.message);
-                glossaryContext = "Glosarium resmi tidak dapat dimuat.";
-            }            const planningPrompt = `Anda adalah Asisten Perencana Senior Nayaxa dari Bapperida yang kritis, cerdas, ramah, dan sangat profesional.
-            
-PENTING: DILARANG KERAS MENGGUNAKAN EMOJI APAPUN.
-            
-Tugas Anda: Buatlah rencana kerja terstruktur (Proposal Rencana) untuk menyelesaikan permintaan pengguna berikut:
-"${userQuery}"
 
-TINJAUAN KRITIS (PROTOKOL MITRA KRITIS):
-Sebelum membuat rencana, evaluasi permintaan pengguna secara analitis:
-- Apakah ada parameter yang tidak efisien atau tidak logis (misalnya anggaran/waktu yang tidak masuk akal, salah mencocokkan nama bidang dengan tupoksi)?
-- Apakah ada potensi ketidakpatuhan terhadap aturan yang tercantum di ingatan/glosarium?
-Jika terdeteksi, Anda WAJIB menambahkan bagian khusus "## 🔍 Catatan Kritis & Rekomendasi Alternatif" di bagian atas proposal untuk memberikan koreksi dan opsi yang lebih efisien kepada pengguna secara objektif.
-
-Rencana Anda harus mencakup:
-1. **Tujuan Utama**: Apa tujuan akhir dari permintaan ini.
-2. **Langkah Penyelesaian & Metodologi**: Rincian proses pengerjaan (termasuk rencana kueri SQL jika terkait database, atau bagian dokumen yang dianalisis jika terkait dokumen).
-3. **Parameter/Variabel**: Sebutkan Bidang (dengan ID dari glosarium jika ada), Nama Pegawai, rentang waktu (Bulan/Tahun), atau Nama Berkas yang diidentifikasi.
-4. **Verifikasi Kepatuhan & Akurasi**: Bagaimana Anda menjamin kebenaran data (seperti verifikasi matematis internal atau pencegahan halusinasi).
-
-Glosarium Referensi:
-${glossaryContext}
-
-Format Jawaban:
-Gunakan Markdown Premium (Heading 2 '##' dan Heading 3 '###', tebalkan teks kunci). Pastikan di akhir proposal, Anda memberikan pilihan tegas kepada pengguna untuk melanjutkan atau merevisi parameter, contoh:
-"Jika Anda menyetujui rencana ini, ketik **Lanjut** untuk memulai eksekusi. Anda juga dapat memberikan masukan atau merevisi parameter di atas."
-
-WAKTU AKTIF: ${fullDate}
-ATURAN SALAM: Saat menyapa, gunakan salam yang sesuai jam pada WAKTU AKTIF: 04:00-10:59 = "Selamat pagi", 11:00-14:59 = "Selamat siang", 15:00-18:29 = "Selamat sore", 18:30-03:59 = "Selamat malam".`;
-
-            const originalMsg = message;
-            message = planningPrompt;
-            let res;
-            if (isDeepSeekEnabled) {
-                try {
-                    res = await executeDeepSeek();
-                } catch (dsErr) {
-                    console.warn('[Routing] DeepSeek plan gen failed, falling back to Gemini:', dsErr.message);
-                }
-            }
-            if (!res || !res.text) {
-                res = await executeGemini('Gemini Paid');
-            }
-            message = originalMsg; // Restore
-            return {
-                brain: res.brain ? `${res.brain} (Planning)` : "Planning",
-                text: res.text
-            };
-        };
 
         // --- MULTI-AGENT SPECIFIC CONFIGURATIONS ---
         const SQL_ANALYST_PROMPT = `Identitas: Nayaxa SQL Analyst Agent.
@@ -374,83 +299,37 @@ Tugas Anda: Buat atau perbarui dokumen Word/PPTX/Excel sesuai permintaan penggun
             return res ? res.text : "";
         };
 
-        // --- PLANNING LIFECYCLE INTERCEPTOR ---
-        let planningRow = null;
-        try {
-            const [rows] = await dbNayaxa.query(
-                "SELECT state, original_prompt, proposed_plan, attachments_json FROM nayaxa_planning_lifecycle WHERE session_id = ?",
-                [activeSessionId]
-            );
-            if (rows.length > 0) {
-                planningRow = rows[0];
-            }
-        } catch (dbErr) {
-            console.error('[Routing] Error querying planning state:', dbErr.message);
-        }
-
-        if (planningRow && planningRow.state === 'PROPOSED') {
-            const isConfirmation = /^(ok|lanjut|lanjutkan|yes|setuju|lakukan|eksekusi|ya|siap|agree|proceed|confirm)$/i.test(message.trim());
+        // --- MULTI-AGENT DIRECT EXECUTION (NO PLANNING) ---
+        const isComplex = !isSnapshot && (isDatabaseTask || isDocAnalysis || isBudgetTask || isHighLogicOrLegalTask);
+        if (isComplex) {
+            console.log(`[Routing] Complex task detected. Running Multi-Agent Execution directly for session ${activeSessionId}...`);
             
-            if (isConfirmation) {
-                console.log(`[Routing] Plan confirmed for session ${activeSessionId}. Running Multi-Agent Execution...`);
-                try {
-                    await dbNayaxa.query("DELETE FROM nayaxa_planning_lifecycle WHERE session_id = ?", [activeSessionId]);
-                } catch (delErr) {
-                    console.error('[Routing] Failed to delete planning row:', delErr.message);
-                }
-                
-                // Override destructured let variables with original prompt and attachments
-                message = planningRow.original_prompt;
-                try {
-                    attachmentList = planningRow.attachments_json ? JSON.parse(planningRow.attachments_json) : [];
-                } catch (pErr) {
-                    console.warn('[Routing] Failed to parse attachments_json:', pErr.message);
-                    attachmentList = [];
-                }
-                
-                // Re-evaluate estimated pages and other file-dependent flags for modified attachmentList
-                estimatedPages = 0;
-                attachmentList.forEach(file => {
-                    if (file.pages) estimatedPages += file.pages;
-                    else if (file.size) estimatedPages += Math.ceil(file.size / 50000);
-                    else estimatedPages += 1;
-                });
+            const userContextString = compileUserContext(userProfile, user_name, nama_instansi);
+            let sqlDataResult = "";
+            let legalRegulationsResult = "";
+            let documentResult = "";
 
-                isSnapshot = message.includes('[NAYAXA_SNAPSHOT]') || message.includes('[NAYAXA_PERIODIC_INSIGHT]');
-                isDatabaseTask = /data|statistik|pegawai|kegiatan|kinerja|capaian|rka|dpa|anggaran|belanja|analisis|query|tabel|db|database/i.test(message);
-                isDocAnalysis = attachmentList && attachmentList.length > 0;
-                hasImages = attachmentList.some(f => 
-                    (f.mimeType && f.mimeType.startsWith('image/')) || 
-                    (f.name && /\.(png|jpg|jpeg|webp|gif|bmp)$/i.test(f.name))
-                );
-                isBudgetTask = /RKA|DPA|Rincian Belanja|Anggaran|Belanja|SSH|SBU/i.test(message) || message.includes('ACTION: Analisis RKA/DPA');
-                isHighLogicOrLegalTask = /aturan|hukum|regulasi|permendagri|perpres|uu|undang|perda|permen|sk|pasal|sanksi|legal|analisis|buatkan dokumen|draft|concept|drafting|analisis logika/i.test(message);                // --- MULTI-AGENT DELEGATION FLOW ---
-                const userContextString = compileUserContext(userProfile, user_name, nama_instansi);
-                let sqlDataResult = "";
-                let legalRegulationsResult = "";
-                let documentResult = "";
+            // 1. Delegate SQL Analyst Agent
+            if (isDatabaseTask) {
+                sqlDataResult = await executeSqlAgent(`${message}\n\nKonteks Pengguna Aktif:\n${userContextString}`);
+            }
 
-                // 1. Delegate SQL Analyst Agent
-                if (isDatabaseTask) {
-                    sqlDataResult = await executeSqlAgent(`${message}\n\nKonteks Pengguna Aktif:\n${userContextString}`);
-                }
+            // 2. Delegate Legal Auditor Agent
+            if (isHighLogicOrLegalTask || isDocAnalysis) {
+                legalRegulationsResult = await executeLegalAgent(`${message}\n\nKonteks Pengguna Aktif:\n${userContextString}`);
+            }
 
-                // 2. Delegate Legal Auditor Agent
-                if (isHighLogicOrLegalTask || isDocAnalysis) {
-                    legalRegulationsResult = await executeLegalAgent(`${message}\n\nKonteks Pengguna Aktif:\n${userContextString}`);
-                }
+            // 3. Delegate Document Designer Agent
+            const isDocRequested = /buatkan dokumen|draft|word|docx|excel|xlsx|pptx|presentasi|slide|notulen\+word/i.test(message) || isBudgetTask;
+            if (isDocRequested) {
+                const combinedContext = `SQL Data:\n${sqlDataResult || 'N/A'}\n\nLegal/Document Context:\n${legalRegulationsResult || 'N/A'}\n\nKonteks Pengguna Aktif:\n${userContextString}`;
+                documentResult = await executeDocAgent(message, combinedContext);
+            }
 
-                // 3. Delegate Document Designer Agent
-                const isDocRequested = /buatkan dokumen|draft|word|docx|excel|xlsx|pptx|presentasi|slide|notulen\+word/i.test(message) || isBudgetTask;
-                if (isDocRequested) {
-                    const combinedContext = `SQL Data:\n${sqlDataResult || 'N/A'}\n\nLegal/Document Context:\n${legalRegulationsResult || 'N/A'}\n\nKonteks Pengguna Aktif:\n${userContextString}`;
-                    documentResult = await executeDocAgent(message, combinedContext);
-                }
-
-                // 4. Orchestrator Synthesis & Polishing (Final response)
-                console.log('[Routing] Synthesizing final response...');
-                const synthesisPrompt = `Anda adalah Asisten AI Utama Nayaxa. Tugas Anda adalah mensintesis laporan akhir yang premium dan terstruktur berdasarkan hasil kerja agen spesialis berikut:
-                
+            // 4. Orchestrator Synthesis & Polishing (Final response)
+            console.log('[Routing] Synthesizing final response...');
+            const synthesisPrompt = `Anda adalah Asisten AI Utama Nayaxa. Tugas Anda adalah mensintesis laporan akhir yang premium dan terstruktur berdasarkan hasil kerja agen spesialis berikut:
+            
 - Permintaan Pengguna: "${message}"
 - Hasil Analisis SQL (Data Internal):
 ${sqlDataResult || 'Tidak ada data SQL.'}
@@ -475,66 +354,27 @@ Sapa pengguna secara personal sesuai nama, jabatan, dan "Panggilan/Sapaan Kehorm
 WAKTU AKTIF: ${fullDate}
 ATURAN SALAM: Saat menyapa, gunakan salam yang sesuai jam pada WAKTU AKTIF: 04:00-10:59 = "Selamat pagi", 11:00-14:59 = "Selamat siang", 15:00-18:29 = "Selamat sore", 18:30-03:59 = "Selamat malam". DILARANG menyapa "Selamat siang" pada malam hari.`;
 
-                const originalMsg = message;
-                message = synthesisPrompt;
-                let finalRes;
-                if (isDeepSeekEnabled) {
-                    try {
-                        finalRes = await executeDeepSeek(false, null);
-                    } catch (err) {
-                        console.warn('[Routing] Synthesis failed on DeepSeek, falling back to Gemini...', err.message);
-                    }
-                }
-                if (!finalRes || !finalRes.text) {
-                    finalRes = await executeGemini('Gemini Paid', false, null);
-                }
-                
-                message = originalMsg; // Restore
-                return {
-                    brain: finalRes.brain ? `${finalRes.brain} (Orchestrator)` : "Orchestrator",
-                    text: finalRes.text
-                };
-            } else {
-                console.log(`[Routing] Plan refined for session ${activeSessionId}. Regenerating plan...`);
-                const refinedPrompt = `Permintaan Awal: ${planningRow.original_prompt}\nRevisi Pengguna: ${message}`;
-                
-                const planResult = await generateProposedPlan(refinedPrompt);
-                
+            const originalMsg = message;
+            message = synthesisPrompt;
+            let finalRes;
+            if (isDeepSeekEnabled) {
                 try {
-                    let finalAttachmentsJson = planningRow.attachments_json;
-                    if (attachmentList && attachmentList.length > 0) {
-                        finalAttachmentsJson = JSON.stringify(attachmentList);
-                    }
-                    await dbNayaxa.query(
-                        "UPDATE nayaxa_planning_lifecycle SET original_prompt = ?, proposed_plan = ?, attachments_json = ? WHERE session_id = ?",
-                        [refinedPrompt, planResult.text, finalAttachmentsJson, activeSessionId]
-                    );
-                } catch (updErr) {
-                    console.error('[Routing] Failed to update planning row:', updErr.message);
+                    finalRes = await executeDeepSeek(false, null);
+                } catch (err) {
+                    console.warn('[Routing] Synthesis failed on DeepSeek, falling back to Gemini...', err.message);
                 }
-                
-                return planResult;
             }
-        } else {
-            // Complex task detection
-            const isComplex = !isSnapshot && (isDatabaseTask || isDocAnalysis || isBudgetTask || isHighLogicOrLegalTask);
-            if (isComplex) {
-                console.log(`[Routing] Complex task detected. Proposing a plan first for session ${activeSessionId}...`);
-                const planResult = await generateProposedPlan(message);
-                
-                try {
-                    await dbNayaxa.query(
-                        "INSERT INTO nayaxa_planning_lifecycle (session_id, state, original_prompt, proposed_plan, attachments_json) VALUES (?, 'PROPOSED', ?, ?, ?) ON DUPLICATE KEY UPDATE state='PROPOSED', original_prompt=?, proposed_plan=?, attachments_json=?",
-                        [activeSessionId, message, planResult.text, JSON.stringify(attachmentList), message, planResult.text, JSON.stringify(attachmentList)]
-                    );
-                } catch (insErr) {
-                    console.error('[Routing] Failed to insert planning row:', insErr.message);
-                }
-                
-                return planResult;
+            if (!finalRes || !finalRes.text) {
+                finalRes = await executeGemini('Gemini Paid', false, null);
             }
+            
+            message = originalMsg; // Restore
+            return {
+                brain: finalRes.brain ? `${finalRes.brain} (Orchestrator)` : "Orchestrator",
+                text: finalRes.text
+            };
         }
-        // --- END OF INTERCEPTOR ---
+
 
         try {
         // --- SMART SENSING: Peak into PDFs to identify Scanned vs Textual ---
