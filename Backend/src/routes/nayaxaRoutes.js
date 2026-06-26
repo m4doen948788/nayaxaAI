@@ -9,9 +9,19 @@ const expressStatic = express.static;
 // Path definitions
 const UPLOAD_PATH = path.join(__dirname, '../../uploads');
 const isLocal = process.platform === 'win32';
-const DASHBOARD_UPLOADS = isLocal 
-    ? path.join(__dirname, '../../../../copy-dashboard/Backend/uploads')
-    : path.join(__dirname, '../../../../dashboard-ppm/Backend/uploads');
+const fs = require('fs');
+
+let DASHBOARD_UPLOADS = '';
+if (isLocal) {
+    const localPaths = [
+        path.join(__dirname, '../../../../SAMP/Backend/uploads'),
+        path.join(__dirname, '../../../../copy-dashboard/Backend/uploads')
+    ];
+    const found = localPaths.find(p => fs.existsSync(p));
+    DASHBOARD_UPLOADS = found || localPaths[0];
+} else {
+    DASHBOARD_UPLOADS = path.join(__dirname, '../../../../dashboard-ppm/Backend/uploads');
+}
 
 // Public Export Download (For chat links)
 router.get('/export/:filename', nayaxaController.downloadExport);

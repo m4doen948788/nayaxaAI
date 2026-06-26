@@ -114,13 +114,13 @@ const nayaxaRoutingService = {
         let isHighLogicOrLegalTask = /aturan|hukum|regulasi|permendagri|perpres|uu|undang|perda|permen|sk|pasal|sanksi|legal|analisis|buatkan dokumen|draft|concept|drafting|analisis logika/i.test(message);
 
         // Define Execution Closures
-        const executeGemini = async (type = 'Gemini Free', isFallback = false, customTools = null) => {
+        const executeGemini = async (type = 'Gemini Free', isFallback = false, customTools = null, customMessage = null) => {
             console.log(`[Routing] Executing Gemini (${type})${isFallback ? ' as Fallback' : ''}`);
             try {
                 return {
                     brain: isFallback ? `Gemini (${type} Fallback)` : `Gemini (${type})`,
                     text: await nayaxaGemini.chatWithNayaxa(
-                        message, attachmentList, instansi_id, month, year, history, user_name, profil_id, 
+                        customMessage || message, attachmentList, instansi_id, month, year, history, user_name, profil_id, 
                         blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet, 
                         userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal, type, customTools
                     )
@@ -131,7 +131,7 @@ const nayaxaRoutingService = {
                     return {
                         brain: `Gemini (Gemini Free Fallback)`,
                         text: await nayaxaGemini.chatWithNayaxa(
-                            message, attachmentList, instansi_id, month, year, history, user_name, profil_id, 
+                            customMessage || message, attachmentList, instansi_id, month, year, history, user_name, profil_id, 
                             blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet, 
                             userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal, 'Gemini Free', customTools
                         )
@@ -141,14 +141,14 @@ const nayaxaRoutingService = {
             }
         };
 
-        const executeDeepSeek = async (isFallback = false, customTools = null) => {
+        const executeDeepSeek = async (isFallback = false, customTools = null, customMessage = null) => {
             console.log(`[Routing] Executing DeepSeek Paid${isFallback ? ' as Fallback' : ''}`);
             // Clean up attachment context for DeepSeek (it doesn't support images directly)
             const textOnlyAttachments = attachmentList.filter(f => !f.mimeType?.includes('image'));
             return {
                 brain: isFallback ? 'DeepSeek (Fallback)' : 'DeepSeek',
                 text: await nayaxaDeepSeek.chatWithNayaxa(
-                    message, textOnlyAttachments, instansi_id, month, year, history, user_name, profil_id, 
+                    customMessage || message, textOnlyAttachments, instansi_id, month, year, history, user_name, profil_id, 
                     blueprintContext, current_page, page_title, baseUrl, fullDate, nama_instansi, personaPromptSnippet, 
                     userProfile, lastActivityContext, !!coding_mode, activeSessionId, onStepCallback, signal, customTools
                 )
@@ -299,6 +299,65 @@ Tugas Anda: Buat atau perbarui dokumen Word/PPTX/Excel sesuai permintaan penggun
             return res ? res.text : "";
         };
 
+        // --- SMART SENSING: Peak into PDFs to identify Scanned vs Textual ---
+        let hasScannedPdf = false;
+        if (attachmentList && attachmentList.length > 0) {
+            for (const file of attachmentList) {
+                if (file.mimeType?.includes('pdf') && file.base64) {
+                    try {
+                        const cleanB64 = file.base64.includes('base64,') ? file.base64.split('base64,')[1] : file.base64;
+                        const buffer = Buffer.from(cleanB64, 'base64');
+                        const pdfData = await pdf(buffer);
+                        const textLength = pdfData.text?.trim().length || 0;
+                        
+                        if (textLength < 100) {
+                            console.log(`[SmartSensing] PDF "${file.name}" identified as SCANNED (Text length: ${textLength}). Routing to Gemini.`);
+                            hasScannedPdf = true;
+                        } else {
+                            console.log(`[SmartSensing] PDF "${file.name}" identified as TEXTUAL (Text length: ${textLength}).`);
+                        }
+                    } catch (e) {
+                        console.warn(`[SmartSensing] Failed to peak into PDF: ${e.message}`);
+                        hasScannedPdf = true; // Safety fallback to Gemini if parsing fails
+                    }
+                }
+            }
+        }
+
+        // --- VISUAL TASK ROUTING: If images or scanned PDFs are present, handle them immediately ---
+        if (hasScannedPdf || hasImages) {
+            const visualType = hasScannedPdf ? 'Scanned PDF' : 'Images';
+            console.log(`[Routing] Poin 6: ${visualType} detected. Triggering "Mata & Otak" (Gemini + DeepSeek) protocol.`);
+            
+            // If it's a budget task, we MUST use DeepSeek Brain after Gemini Eyes
+            if (isBudgetTask) {
+                console.log('[Routing] Budget task with visual data. Using Gemini Paid (Eyes) -> DeepSeek Paid (Brain).');
+                try {
+                    // 1. MATA (Gemini): Extract text/vision
+                    const visionPrompt = "Ekstrak seluruh teks dan data tabel dari dokumen/gambar ini secara sangat mendetail. Jangan berikan analisis, cukup berikan data mentah hasil pembacaan Anda.";
+                    const visionResult = await executeGemini('Gemini Paid', false, null, visionPrompt);
+                    
+                    // 2. OTAK (DeepSeek): Analyze
+                    console.log('[Routing] Vision extraction complete. Passing to DeepSeek Brain...');
+                    const brainPrompt = `${message}\n\n=== DATA EKSTRAKSI VISUAL DOKUMEN/GAMBAR ===\n${visionResult.text}`;
+                    const brainResult = await executeDeepSeek(false, null, brainPrompt);
+                    
+                    // Inject vision context into brain result for transparency
+                    return {
+                        brain: "DeepSeek (Brain) + Gemini (Eyes)",
+                        text: brainResult.text
+                    };
+                } catch (err) {
+                    console.warn('[Routing] Collaborative protocol failed, falling back to Gemini Paid only.');
+                    return await executeGemini('Gemini Paid', true);
+                }
+            } else {
+                // For non-budget tasks, Gemini Paid is usually sufficient
+                console.log('[Routing] Non-budget visual task. Using Gemini Paid.');
+                return await executeGemini('Gemini Paid');
+            }
+        }
+
         // --- MULTI-AGENT DIRECT EXECUTION (NO PLANNING) ---
         const isComplex = !isSnapshot && (isDatabaseTask || isDocAnalysis || isBudgetTask || isHighLogicOrLegalTask);
         if (isComplex) {
@@ -375,64 +434,7 @@ ATURAN SALAM: Saat menyapa, gunakan salam yang sesuai jam pada WAKTU AKTIF: 04:0
             };
         }
 
-
         try {
-        // --- SMART SENSING: Peak into PDFs to identify Scanned vs Textual ---
-        let hasScannedPdf = false;
-        if (attachmentList && attachmentList.length > 0) {
-            for (const file of attachmentList) {
-                if (file.mimeType?.includes('pdf') && file.base64) {
-                    try {
-                        const cleanB64 = file.base64.includes('base64,') ? file.base64.split('base64,')[1] : file.base64;
-                        const buffer = Buffer.from(cleanB64, 'base64');
-                        const pdfData = await pdf(buffer);
-                        const textLength = pdfData.text?.trim().length || 0;
-                        
-                        if (textLength < 100) {
-                            console.log(`[SmartSensing] PDF "${file.name}" identified as SCANNED (Text length: ${textLength}). Routing to Gemini.`);
-                            hasScannedPdf = true;
-                        } else {
-                            console.log(`[SmartSensing] PDF "${file.name}" identified as TEXTUAL (Text length: ${textLength}).`);
-                        }
-                    } catch (e) {
-                        console.warn(`[SmartSensing] Failed to peak into PDF: ${e.message}`);
-                        hasScannedPdf = true; // Safety fallback to Gemini if parsing fails
-                    }
-                }
-            }
-        }
-
-        if (hasScannedPdf || hasImages) {
-            const visualType = hasScannedPdf ? 'Scanned PDF' : 'Images';
-            console.log(`[Routing] Poin 6: ${visualType} detected. Triggering "Mata & Otak" (Gemini + DeepSeek) protocol.`);
-            
-            // If it's a budget task, we MUST use DeepSeek Brain after Gemini Eyes
-            if (isBudgetTask) {
-                console.log('[Routing] Budget task with visual data. Using Gemini Paid (Eyes) -> DeepSeek Paid (Brain).');
-                try {
-                    // 1. MATA (Gemini): Extract text/vision
-                    const visionPrompt = "Ekstrak seluruh teks dan data tabel dari dokumen/gambar ini secara sangat mendetail. Jangan berikan analisis, cukup berikan data mentah hasil pembacaan Anda.";
-                    const visionResult = await executeGemini('Gemini Paid');
-                    
-                    // 2. OTAK (DeepSeek): Analyze
-                    console.log('[Routing] Vision extraction complete. Passing to DeepSeek Brain...');
-                    const brainResult = await executeDeepSeek();
-                    
-                    // Inject vision context into brain result for transparency
-                    return {
-                        brain: "DeepSeek (Brain) + Gemini (Eyes)",
-                        text: brainResult.text
-                    };
-                } catch (err) {
-                    console.warn('[Routing] Collaborative protocol failed, falling back to Gemini Paid only.');
-                    return await executeGemini('Gemini Paid', true);
-                }
-            } else {
-                // For non-budget tasks, Gemini Paid is usually sufficient
-                console.log('[Routing] Non-budget visual task. Using Gemini Paid.');
-                return await executeGemini('Gemini Paid');
-            }
-        }
 
             // POIN 1 & 2: Light Conversation / Snapshots
             // Urutan: Gemini Free → DeepSeek Paid (Legal/High-Logic tasks override to DeepSeek Paid first)

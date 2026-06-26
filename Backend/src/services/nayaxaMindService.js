@@ -10,9 +10,17 @@ const nayaxaStandalone = require('./nayaxaStandalone');
 const axios = require('axios');
 
 const isLocal = process.platform === 'win32';
-const DASHBOARD_UPLOADS = isLocal 
-    ? path.join(__dirname, '../../../../copy-dashboard/Backend/uploads')
-    : path.join(__dirname, '../../../../dashboard-ppm/Backend/uploads');
+let DASHBOARD_UPLOADS = '';
+if (isLocal) {
+    const localPaths = [
+        path.join(__dirname, '../../../../SAMP/Backend/uploads'),
+        path.join(__dirname, '../../../../copy-dashboard/Backend/uploads')
+    ];
+    const found = localPaths.find(p => fs.existsSync(p));
+    DASHBOARD_UPLOADS = found || localPaths[0];
+} else {
+    DASHBOARD_UPLOADS = path.join(__dirname, '../../../../dashboard-ppm/Backend/uploads');
+}
 
 /**
  * Hybrid PDF Processor: Gemini as the Eyes, DeepSeek as the Brain (Orchestrated by Routing)

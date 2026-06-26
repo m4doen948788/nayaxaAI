@@ -13,6 +13,7 @@ const path = require('path');
 const ALLOWED_ROOTS = [
     path.resolve('D:\\nayaxa-engine'),
     path.resolve('D:\\copy-dashboard'),
+    path.resolve('D:\\SAMP'),
 ];
 
 // Files and directories that are ALWAYS forbidden, even inside allowed roots.
