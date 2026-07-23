@@ -346,6 +346,15 @@ async function migrate() {
         `);
         console.log('  ✅ nayaxa_users superadmin seeded/verified.');
 
+        // Seed akun penghubung sammyl & levina (kode akses: 112626)
+        await dbNayaxa.query(`
+            INSERT IGNORE INTO nayaxa_users (username, name, email, password, role, is_active)
+            VALUES 
+            ('sammyl', 'Sammy L', 'sammyl@nayaxa.my.id', '$2b$10$hDJLXRvLp8ONgE1xs4Erouk4Rv2MLLgJBxf78XzKNoCgU9Ie16BNO', 'Pengguna Nayaxa', 1),
+            ('levina', 'Levina', 'levina@nayaxa.my.id', '$2b$10$hDJLXRvLp8ONgE1xs4Erouk4Rv2MLLgJBxf78XzKNoCgU9Ie16BNO', 'Pengguna Nayaxa', 1)
+        `);
+        console.log('  ✅ nayaxa_users sammyl & levina (bridge 112626) seeded/verified.');
+
         // 1. Seed nayaxa_global_configs
         await dbNayaxa.query(`
             INSERT IGNORE INTO nayaxa_global_configs (config_key, config_value, description) VALUES
