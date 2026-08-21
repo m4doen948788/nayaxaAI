@@ -6,13 +6,19 @@ const knowledgeTool = {
      */
     ingestToKnowledge: async (app_id, category, content, source_file, feature_name = 'General') => {
         try {
+            // Strip 4-byte characters (emoji, etc.) to ensure compatibility with utf8mb3 databases
+            const sanitize = (str) => (str || '').replace(/[\u{10000}-\u{10FFFF}]/gu, '').replace(/[\uD800-\uDFFF]/g, '');
+            const safeContent = sanitize(content);
+            const safeCategory = sanitize(category);
+            const safeSource = sanitize(source_file);
+
             // Split content into chunks if too large (naive split for now)
-            const chunks = content.match(/[\s\S]{1,2000}/g) || [content];
+            const chunks = safeContent.match(/[\s\S]{1,2000}/g) || [safeContent];
             
             for (const chunk of chunks) {
                 await dbNayaxa.query(
                     'INSERT INTO nayaxa_knowledge (app_id, category, content, source_file, feature_name, context_rules) VALUES (?, ?, ?, ?, ?, ?)',
-                    [app_id, category, chunk, source_file, feature_name, '[]']
+                    [app_id, safeCategory, chunk, safeSource, feature_name, '[]']
                 );
             }
             
