@@ -19,7 +19,9 @@ const sanitizeText = (text) => {
         .replace(/<br\s*\/?>/gi, '\n') // Convert <br> to real newlines
         .replace(/<[^>]*>/g, '') // Strip remaining HTML tags
         .replace(/\*\*/g, '') // Strip bold asterisks (Word handles bolding separately)
-        .replace(/[`_~]/g, ''); // Strip other common MD markers
+        .replace(/[`_~]/g, '') // Strip other common MD markers
+        .replace(/[\u{10000}-\u{10FFFF}]/gu, '') // Strip 4-byte emoji (e.g. 📊🌟🚀) - incompatible with some Word XML parsers
+        .replace(/[\uD800-\uDFFF]/g, ''); // Strip orphaned surrogate pairs
 };
 
 /**
