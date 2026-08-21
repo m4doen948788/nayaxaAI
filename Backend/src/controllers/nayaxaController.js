@@ -51,10 +51,14 @@ const buildExportDownloadUrl = (req, downloadPath) => {
     // Smart sensing fallback for production to prevent ERR_SSL_PROTOCOL_ERROR
     const host = (req.get('x-forwarded-host') || req.get('host') || '').toLowerCase();
     
-    // If either incoming host header OR loaded NAYAXA_PUBLIC_URL env var contains the production domain,
+    // If incoming host header contains the production domain,
     // force rewrite base to the official secure SSL subdomain in production.
-    if (host.includes('bapperida-ppm.my.id') || base.includes('bapperida-ppm.my.id')) {
+    if (host.includes('bapperida-ppm.my.id')) {
         base = 'https://api-nayaxa.bapperida-ppm.my.id';
+    } else if (host.includes('localhost') || host.includes('127.0.0.1')) {
+        // Force local base URL when testing locally to bypass production environment configuration overrides
+        const proto = req.get('x-forwarded-proto') || 'http';
+        base = `${proto}://${host}`;
     }
 
     if (!base) {
@@ -602,14 +606,14 @@ const nayaxaController = {
                         NULLIF(MAX(s.title), ''), 
                         SUBSTRING((
                             SELECT content FROM nayaxa_chat_history 
-                            WHERE session_id = h.session_id COLLATE utf8mb4_unicode_ci
+                            WHERE session_id = h.session_id
                             ORDER BY id ASC LIMIT 1
                         ), 1, 50)
                     ) as title,
                     (MAX(p.id) IS NOT NULL) as is_pinned
                  FROM nayaxa_chat_history h 
-                 LEFT JOIN nayaxa_chat_sessions s ON h.session_id = s.session_id COLLATE utf8mb4_unicode_ci
-                 LEFT JOIN nayaxa_pinned_sessions p ON h.session_id = p.session_id COLLATE utf8mb4_unicode_ci AND p.user_id = h.user_id
+                 LEFT JOIN nayaxa_chat_sessions s ON h.session_id = s.session_id
+                 LEFT JOIN nayaxa_pinned_sessions p ON h.session_id = p.session_id AND p.user_id = h.user_id
                  WHERE h.app_id = ? AND h.user_id = ? 
                  GROUP BY h.session_id
                  ORDER BY is_pinned DESC, last_msg DESC 
@@ -814,7 +818,13 @@ const nayaxaController = {
 
             const exportService = require('../services/exportService');
             const fullContent = messages.join('\n\n');
-            const downloadPath = await exportService.generateWord(fullContent, filename || 'Pilihan_Obrolan.docx');
+            
+            // Create a unique filename using timestamp and a random number to bypass caching and prevent overwriting
+            const baseName = (filename || 'Hasil_Pilihan_Obrolan').replace(/\.docx$/i, '').trim();
+            const uniqueSuffix = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+            const uniqueFilename = `${baseName}_${uniqueSuffix}.docx`;
+
+            const downloadPath = await exportService.generateWord(fullContent, uniqueFilename);
             
             const downloadUrl = buildExportDownloadUrl(req, downloadPath);
             res.json({ success: true, download_url: downloadUrl });

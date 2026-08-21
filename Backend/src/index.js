@@ -29,6 +29,7 @@ app.get('/health', (req, res) => {
 // Primary Nayaxa Routes
 const nayaxaRoutes = require('./routes/nayaxaRoutes');
 app.use('/', nayaxaRoutes);
+app.use('/api/nayaxa', nayaxaRoutes);
 
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`=========================================`);

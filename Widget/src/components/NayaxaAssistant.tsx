@@ -5,7 +5,7 @@ import NayaxaChart from '@/src/components/NayaxaChart';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Mermaid from '@/src/components/Mermaid';
-import { Send, Bot, User, Zap, X, ChevronDown, Paperclip, FileText, Image as ImageIcon } from 'lucide-react';
+import { Send, Bot, User, Zap, X, ChevronDown, Paperclip, FileText, Image as ImageIcon, History, Plus, Trash2, ArrowLeft, MessageSquare } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 interface NayaxaAssistantProps {
@@ -46,6 +46,69 @@ export default function NayaxaAssistant({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [widgetPrompts, setWidgetPrompts] = useState<{ label: string, prompt: string }[]>([]);
+
+  const [showHistory, setShowHistory] = useState(false);
+  const [sessions, setSessions] = useState<any[]>([]);
+
+  const fetchSessions = () => {
+    const userId = user?.id || 7;
+    api.getSessions(userId).then(res => {
+      if (res && res.success) {
+        setSessions(res.sessions || []);
+      }
+    }).catch(err => {
+      console.error("Gagal mengambil riwayat sesi:", err);
+    });
+  };
+
+  useEffect(() => {
+    fetchSessions();
+  }, [user?.id]);
+
+  const handleSelectSession = async (sessId: string) => {
+    setIsTyping(true);
+    setShowHistory(false);
+    try {
+      const res = await api.getHistoryBySession(sessId);
+      if (res && res.success) {
+        setSessionId(sessId);
+        const mappedMessages = (res.history || []).map((h: any) => ({
+          role: h.role === 'model' || h.role === 'assistant' ? 'model' : 'user',
+          content: h.content,
+          brain_used: h.brain_used || 'Gemini',
+          thought: h.thought || '',
+          thinkTime: h.think_time || 0
+        }));
+        setMessages(mappedMessages);
+      }
+    } catch (e) {
+      console.error("Gagal memuat riwayat sesi:", e);
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
+  const handleDeleteSession = async (e: React.MouseEvent, sessId: string) => {
+    e.stopPropagation();
+    if (!window.confirm("Apakah Anda yakin ingin menghapus obrolan ini?")) return;
+    try {
+      const res = await api.deleteSession(sessId);
+      if (res && res.success) {
+        fetchSessions();
+        if (sessionId === sessId) {
+          handleNewChat();
+        }
+      }
+    } catch (err) {
+      console.error("Gagal menghapus sesi:", err);
+    }
+  };
+
+  const handleNewChat = () => {
+    setMessages([]);
+    setSessionId(null);
+    setShowHistory(false);
+  };
 
   // Excel Preview States
   const [excelPreviewOpen, setExcelPreviewOpen] = useState(false);
@@ -227,7 +290,10 @@ export default function NayaxaAssistant({
           thought: thought,
           thinkTime: Math.round((Date.now() - (startTime || 0)) / 1000)
         }]);
-        if (data.session_id) setSessionId(data.session_id);
+        if (data.session_id) {
+          setSessionId(data.session_id);
+          setTimeout(fetchSessions, 500);
+        }
         setIsTyping(false);
         setCurrentSteps([]);
         setCurrentResponse('');
@@ -253,7 +319,17 @@ export default function NayaxaAssistant({
                 <span className="text-[10px] text-white/70 font-medium tracking-wide">AI AGENT MODULE V4.3</span>
             </div>
         </div>
-        <div className="flex items-center gap-2 relative z-10">
+        <div className="flex items-center gap-2.5 relative z-10">
+            <button 
+              onClick={() => {
+                setShowHistory(!showHistory);
+                if (!showHistory) fetchSessions();
+              }}
+              className="p-1.5 hover:bg-white/20 rounded-xl text-white transition-all"
+              title="Riwayat Obrolan"
+            >
+              <History size={16} />
+            </button>
             <motion.div animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity, duration: 2 }}>
                 <Zap size={14} className="text-yellow-300" />
             </motion.div>
@@ -262,15 +338,77 @@ export default function NayaxaAssistant({
 
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-5 space-y-7 bg-slate-50/30 custom-scrollbar">
-        {messages.length === 0 && (
-            <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-40">
-                <div className="w-16 h-16 bg-indigo-50 rounded-3xl flex items-center justify-center mb-4">
-                    <Bot size={32} className="text-indigo-300" />
+        {showHistory ? (
+            <div className="space-y-4 animate-in fade-in duration-300">
+              <div className="flex items-center justify-between border-b border-slate-200/85 pb-2.5">
+                <span className="text-[10px] font-black text-slate-400 tracking-wider uppercase">Riwayat Obrolan</span>
+                <button
+                  onClick={handleNewChat}
+                  className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg text-[9px] font-black uppercase transition-all flex items-center gap-1.5 border border-indigo-100"
+                >
+                  <Plus size={10} /> Obrolan Baru
+                </button>
+              </div>
+
+              {sessions.length === 0 ? (
+                <div className="py-16 flex flex-col items-center justify-center text-center opacity-40">
+                  <MessageSquare size={32} className="text-slate-400 mb-2" />
+                  <h4 className="text-xs font-bold text-slate-800">Belum Ada Riwayat</h4>
+                  <p className="text-[10px] text-slate-500 mt-1 max-w-[180px]">Mulailah chat baru dengan mengirimkan pesan.</p>
                 </div>
-                <h4 className="text-sm font-bold text-slate-800">Bagaimana saya bisa membantu hari ini?</h4>
-                <p className="text-[11px] text-slate-500 mt-2 max-w-[200px]">Tanyakan tentang kegiatan, statistik, atau analisis database Anda.</p>
+              ) : (
+                <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1">
+                  {sessions.map((s, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => handleSelectSession(s.session_id)}
+                      className={`p-3 rounded-2xl border text-left cursor-pointer transition-all flex items-center justify-between gap-3 group/item ${
+                        sessionId === s.session_id 
+                        ? 'bg-indigo-50 border-indigo-200 text-indigo-900 font-medium' 
+                        : 'bg-white hover:bg-slate-50 border-slate-100 hover:border-slate-200 text-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 overflow-hidden flex-1">
+                        <MessageSquare size={16} className={sessionId === s.session_id ? 'text-indigo-600 shrink-0' : 'text-slate-400 shrink-0'} />
+                        <div className="flex flex-col overflow-hidden">
+                          <span className="text-xs font-bold truncate pr-2">
+                            {s.title || 'Obrolan Tanpa Judul'}
+                          </span>
+                          <span className="text-[9px] text-slate-400 font-semibold mt-0.5">
+                            {s.created_at ? new Date(s.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => handleDeleteSession(e, s.session_id)}
+                        className="p-1 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 opacity-0 group-hover/item:opacity-100 transition-all shrink-0"
+                        title="Hapus Obrolan"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <button
+                onClick={() => setShowHistory(false)}
+                className="w-full mt-2 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+              >
+                <ArrowLeft size={12} /> Kembali ke Obrolan
+              </button>
             </div>
-        )}
+        ) : (
+          <>
+            {messages.length === 0 && (
+                <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-40">
+                    <div className="w-16 h-16 bg-indigo-50 rounded-3xl flex items-center justify-center mb-4">
+                        <Bot size={32} className="text-indigo-300" />
+                    </div>
+                    <h4 className="text-sm font-bold text-slate-800">Bagaimana saya bisa membantu hari ini?</h4>
+                    <p className="text-[11px] text-slate-500 mt-2 max-w-[200px]">Tanyakan tentang kegiatan, statistik, atau analisis database Anda.</p>
+                </div>
+            )}
 
         {messages.map((m, i) => (
           <div key={i} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'} group animate-in fade-in slide-in-from-bottom-2 duration-300`}>
@@ -456,6 +594,8 @@ export default function NayaxaAssistant({
           </div>
         )}
         <div ref={messagesEndRef} />
+          </>
+        )}
       </div>
 
       <div className="p-4 bg-white border-t border-slate-100 flex flex-col gap-3 shadow-[0_-10px_25px_rgba(0,0,0,0.02)]">
