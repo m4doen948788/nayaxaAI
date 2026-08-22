@@ -80,13 +80,17 @@ Output HANYA judul percakapan saja, jangan berikan teks pembuka atau penutup.`;
                 }
 
                 if (!title) return;
+                
+                // Strip 4-byte characters (emoji, etc.) to ensure compatibility with utf8mb3 databases
+                const safeTitle = title.replace(/[\u{10000}-\u{10FFFF}]/gu, '').replace(/[\uD800-\uDFFF]/g, '').trim();
+                if (!safeTitle) return;
 
                 // 8. Upsert title to DB
                 await dbNayaxa.query(
                     `INSERT INTO nayaxa_chat_sessions (app_id, user_id, session_id, title)
                      VALUES (?, ?, ?, ?)
                      ON DUPLICATE KEY UPDATE title = VALUES(title), updated_at = NOW()`,
-                    [app_id, user_id, session_id, title]
+                    [app_id, user_id, session_id, safeTitle]
                 );
 
                 console.log(`[SessionTitle] Title generated for session ${session_id}: "${title}"`);

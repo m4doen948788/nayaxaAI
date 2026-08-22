@@ -9,6 +9,13 @@ const dbDashboard = require('../config/dbDashboard');
 const codeAgent = require('../services/codeAgentService');
 const pdf = require('pdf-parse');
 
+// Helper to strip 4-byte characters (emojis) for compatibility with utf8mb3 databases
+const stripEmoji = (str) => {
+    if (!str || typeof str !== 'string') return str;
+    return str.replace(/[\u{10000}-\u{10FFFF}]/gu, '').replace(/[\uD800-\uDFFF]/g, '');
+};
+
+
 // In-Memory Cache for Insights & Repeat Questions
 const insightsCache = new Map();
 const chatResponseCache = new Map();
@@ -247,9 +254,10 @@ const nayaxaController = {
         await queueRequest();
         try {
             // 1. Save User Message
+            const safeUserMessage = stripEmoji(message);
             await dbNayaxa.query(
                 'INSERT INTO nayaxa_chat_history (app_id, user_id, session_id, role, content) VALUES (?, ?, ?, ?, ?)', 
-                [app_id, user_id, activeSessionId, 'user', message]
+                [app_id, user_id, activeSessionId, 'user', safeUserMessage]
             );
 
             // 2. Load History
@@ -310,14 +318,15 @@ const nayaxaController = {
             const brain = routeResult.brain;
 
             // 4. Save & Cache Response
-            const contentToSave = responseText
+            const contentToSave = (responseText || "")
                 .replace(/<thought>[\s\S]*?<\/thought>/gi, '')
                 .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
                 .replace(/\[NAYAXA_CHART\][\s\S]*?\[\/NAYAXA_CHART\]/g, '[Grafik]')
                 .replace(/\[ACTION:REQUEST_LOCATION\]/g, '');
+            const safeContentToSave = stripEmoji(contentToSave);
             await dbNayaxa.query(
                 'INSERT INTO nayaxa_chat_history (app_id, user_id, session_id, role, content, brain_used) VALUES (?, ?, ?, ?, ?, ?)', 
-                [app_id, user_id, activeSessionId, 'model', contentToSave, brain]
+                [app_id, user_id, activeSessionId, 'model', safeContentToSave, brain]
             );
 
             const resultData = { success: true, text: responseText, brain_used: brain, session_id: activeSessionId };
@@ -380,9 +389,10 @@ const nayaxaController = {
         await queueRequest();
         try {
             // Save user message
+            const safeUserMessage = stripEmoji(message);
             await dbNayaxa.query(
                 'INSERT INTO nayaxa_chat_history (app_id, user_id, session_id, role, content) VALUES (?, ?, ?, ?, ?)',
-                [app_id, user_id, activeSessionId, 'user', message]
+                [app_id, user_id, activeSessionId, 'user', safeUserMessage]
             );
 
             // Load history
@@ -551,9 +561,10 @@ const nayaxaController = {
                 .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
                 .replace(/\[NAYAXA_CHART\][\s\S]*?\[\/NAYAXA_CHART\]/g, '[Grafik]')
                 .replace(/\[ACTION:REQUEST_LOCATION\]/g, '');
+            const safeContentToSave = stripEmoji(contentToSave);
             await dbNayaxa.query(
                 'INSERT INTO nayaxa_chat_history (app_id, user_id, session_id, role, content, brain_used) VALUES (?, ?, ?, ?, ?, ?)',
-                [app_id, user_id, activeSessionId, 'model', contentToSave, brainUsed]
+                [app_id, user_id, activeSessionId, 'model', safeContentToSave, brainUsed]
             );
 
             // Send final response
