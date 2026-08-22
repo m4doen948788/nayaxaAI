@@ -379,7 +379,7 @@ const exportService = {
                         
                         tableRows.push(new TableRow({
                             children: cells.map(cell => new TableCell({
-                                width: { size: 100 / cells.length, type: WidthType.PERCENTAGE },
+                                width: { size: Math.round(9026 / cells.length), type: WidthType.DXA },
                                 children: [new Paragraph({ 
                                     children: processTextRuns(cell.trim(), isHeader, isHeader ? docxFontSize : docxFontSize - 2),
                                     alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
@@ -403,7 +403,7 @@ const exportService = {
                 
                 children.push(new Table({
                     rows: tableRows,
-                    width: { size: 100, type: WidthType.PERCENTAGE },
+                    width: { size: 9026, type: WidthType.DXA },
                     alignment: AlignmentType.CENTER,
                     borders: {
                         top: { style: BorderStyle.SINGLE, size: 2, color: "4F46E5" },
