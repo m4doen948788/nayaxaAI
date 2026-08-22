@@ -1473,7 +1473,8 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
             let lastFinishReason = initialRes.finish_reason;
             
             let loop = 0;
-            const MAX_LOOPS = 20;
+            const MAX_LOOPS = 10; // Safety cap
+            let stallCount = 0; // Guard against infinite 'length' loops
 
             while (loop < MAX_LOOPS) {
                 if (signal?.aborted) break;
@@ -1482,6 +1483,17 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                 
                 // EXIT CONDITION: No more tools AND no truncation
                 if (combinedToolCalls.length === 0 && lastFinishReason !== 'length') break;
+
+                // STALL GUARD: If model keeps returning 'length' but content isn't growing, break to prevent infinite thinking loop
+                if (combinedToolCalls.length === 0 && lastFinishReason === 'length') {
+                    stallCount++;
+                    if (stallCount >= 3) {
+                        console.warn('[DeepSeek] Stall guard triggered: model looping on finish_reason=length without new content. Breaking.');
+                        break;
+                    }
+                } else {
+                    stallCount = 0;
+                }
 
                 loop++;
 
@@ -1584,6 +1596,9 @@ PROFIL USER: Nama ${user_name}, Instansi ID ${instansi_id}.
                 if (turnContent) {
                     messageContent += (messageContent ? '' : '') + turnContent; // No extra newline for mid-sentence resume
                 }
+
+                // If model responded with stop (no tool calls needed anymore), we're done
+                if (lastFinishReason === 'stop' && toolCalls.filter(tc => tc && tc.function.name).length === 0) break;
             }
 
             // CLEANUP: Remove DSML tags and internal tool-calling leaks
