@@ -612,7 +612,7 @@ const nayaxaMindService = {
             const [result] = await dbNayaxa.query(`
                 DELETE FROM nayaxa_chat_history 
                 WHERE created_at < NOW() - INTERVAL 3 DAY 
-                  AND session_id NOT IN (SELECT session_id COLLATE utf8mb4_unicode_ci FROM nayaxa_pinned_sessions)
+                  AND session_id NOT IN (SELECT session_id FROM nayaxa_pinned_sessions)
             `);
             console.log(`[Mind] Chat history cleanup complete. Deleted rows: ${result.affectedRows}`);
         } catch (e) {
