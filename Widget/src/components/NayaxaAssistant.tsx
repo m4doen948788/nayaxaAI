@@ -5,7 +5,7 @@ import NayaxaChart from '@/src/components/NayaxaChart';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Mermaid from '@/src/components/Mermaid';
-import { Send, Bot, User, Zap, X, ChevronDown, Paperclip, FileText, Image as ImageIcon, History, Plus, Trash2, ArrowLeft, MessageSquare, Sparkles, Users } from 'lucide-react';
+import { Send, Bot, User, Zap, X, ChevronDown, Paperclip, FileText, Image as ImageIcon, History, Plus, Trash2, ArrowLeft, MessageSquare, Sparkles } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 interface NayaxaAssistantProps {
@@ -343,16 +343,6 @@ export default function NayaxaAssistant({
             </div>
         </div>
         <div className="flex items-center gap-2.5 relative z-10">
-            {/* Bridge jalur penghubung ke user-to-user chat nayaxa.my.id (sammyl - levina, kode: 112626) */}
-            <a 
-              href="https://nayaxa.my.id/user-chat?code=112626&users=sammyl,levina"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="p-1.5 hover:bg-white/20 rounded-xl text-white transition-all"
-              title="Jalur Penghubung Chat Rekan (sammyl - levina)"
-            >
-              <Users size={16} />
-            </a>
             <button 
               onClick={() => {
                 setShowHistory(!showHistory);
