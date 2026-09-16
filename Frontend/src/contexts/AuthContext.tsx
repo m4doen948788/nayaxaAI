@@ -20,19 +20,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Simulasi loading identitas dari database/session
-    // Default awal adalah Sammy (ID 95) yang baru kita buat
     const savedUser = localStorage.getItem('nayaxa_assistant_user');
     if (savedUser) {
-      setCurrentUser(JSON.parse(savedUser));
+      try {
+        const parsed = JSON.parse(savedUser);
+        // Hapus cache default lama jika masih menyimpan superadmin.sammy
+        if (parsed.name === 'superadmin.sammy' || parsed.id === 95) {
+          localStorage.removeItem('nayaxa_assistant_user');
+          setCurrentUser(null);
+        } else {
+          setCurrentUser(parsed);
+        }
+      } catch {
+        setCurrentUser(null);
+      }
     } else {
-      const defaultUser = { 
-        id: 95, 
-        name: 'superadmin.sammy', 
-        role: 'Super Administrator',
-        avatar: 'S'
-      };
-      setCurrentUser(defaultUser);
+      // Default: Akses Publik / Belum Login
+      setCurrentUser(null);
     }
     setIsLoading(false);
   }, []);

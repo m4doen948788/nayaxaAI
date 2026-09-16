@@ -42,28 +42,23 @@ function AppContent() {
           </div>
 
           <nav className="flex-1 px-4 py-4 space-y-2 overflow-y-auto">
-            <SidebarLink to="/dashboard" icon={<LayoutDashboard size={20} />} label="Overview" isOpen={isSidebarOpen} />
             <SidebarLink to="/chat" icon={<MessageSquare size={20} />} label="Omni Chat" isOpen={isSidebarOpen} />
-            <SidebarLink to="/knowledge" icon={<BookOpen size={20} />} label="Knowledge" isOpen={isSidebarOpen} />
-            <SidebarLink to="/usage" icon={<BarChart3 size={20} />} label="Usage Stats" isOpen={isSidebarOpen} />
-            <SidebarLink to="/profile" icon={<User size={20} />} label="My Persona" isOpen={isSidebarOpen} />
           </nav>
 
           <div className="p-4 mt-auto border-t border-slate-100 space-y-4">
              {/* Account Badge */}
              <div className={`flex items-center gap-3 p-3 rounded-2xl bg-slate-50 border border-slate-100 transition-all ${!isSidebarOpen ? 'justify-center px-0' : ''}`}>
-               <div className="w-10  h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center text-white font-bold shrink-0 shadow-lg">
-                  {currentUser?.avatar || currentUser?.name[0].toUpperCase() || 'U'}
+               <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center text-white font-bold shrink-0 shadow-lg">
+                  {currentUser?.avatar || (currentUser?.name ? currentUser.name[0].toUpperCase() : 'P')}
                </div>
                {isSidebarOpen && (
                  <div className="overflow-hidden">
-                   <p className="text-sm font-bold text-slate-900 truncate">{currentUser?.name || 'Loading...'}</p>
-                   <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider truncate">{currentUser?.role || 'User'}</p>
+                   <p className="text-sm font-bold text-slate-900 truncate">{currentUser?.name || 'Pengguna Umum'}</p>
+                   <p className="text-[10px] text-indigo-500 font-semibold uppercase tracking-wider truncate">{currentUser?.role || 'Akses Publik'}</p>
                  </div>
                )}
              </div>
 
-             <SidebarLink to="/settings" icon={<Settings size={20} />} label="Settings" isOpen={isSidebarOpen} />
              <button 
                 onClick={() => setSidebarOpen(!isSidebarOpen)}
                 className="w-full mt-4 p-3 flex items-center justify-center rounded-2xl bg-slate-50 text-slate-400 hover:text-indigo-600 transition-all"
@@ -81,13 +76,13 @@ function AppContent() {
           
           <div className="relative h-full">
             <Routes>
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
-              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/" element={<Navigate to="/chat" replace />} />
               <Route path="/chat" element={<Chat />} />
+              <Route path="/dashboard" element={<Navigate to="/chat" replace />} />
               <Route path="/knowledge" element={<Knowledge />} />
               <Route path="/usage" element={<UsageStats />} />
               <Route path="/profile" element={<Profile />} />
-              <Route path="/settings" element={<div>Settings Page</div>} />
+              <Route path="*" element={<Navigate to="/chat" replace />} />
             </Routes>
           </div>
         </main>

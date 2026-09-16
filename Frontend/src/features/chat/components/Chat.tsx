@@ -102,10 +102,18 @@ export default function Chat() {
     }
   }, [input]);
 
-  useEffect(() => {
-    if (currentUser?.id) {
-      fetchSessions();
+  const getEffectiveUserId = () => {
+    if (currentUser?.id) return currentUser.id;
+    let guestId = localStorage.getItem('nayaxa_guest_id');
+    if (!guestId) {
+      guestId = String(Math.floor(100000 + Math.random() * 900000));
+      localStorage.setItem('nayaxa_guest_id', guestId);
     }
+    return parseInt(guestId, 10);
+  };
+
+  useEffect(() => {
+    fetchSessions();
   }, [currentUser?.id]);
 
   useEffect(() => {
@@ -121,7 +129,7 @@ export default function Chat() {
   const fetchSessions = async () => {
     setLoadingSessions(true);
     try {
-      const res = await api.getSessions(currentUser?.id || 0);
+      const res = await api.getSessions(getEffectiveUserId());
       if (res.success) setSessions(res.sessions || []);
     } catch (err) { console.error(err); }
     setLoadingSessions(false);
@@ -194,13 +202,16 @@ export default function Chat() {
         hour: '2-digit', minute: '2-digit', hour12: false
       }) + ' ' + tzSuffix;
 
+      const effectiveUserId = getEffectiveUserId();
+      const effectiveUserName = currentUser?.name || 'Pengguna Umum';
+
       const res = await api.chatStream(
         {
           message: msg,
-          user_id: currentUser?.id,
-          user_name: currentUser?.name,
+          user_id: effectiveUserId,
+          user_name: effectiveUserName,
           session_id: activeSessionId,
-          profil_id: currentUser?.id,
+          profil_id: effectiveUserId,
           instansi_id: INSTANSI_ID,
           coding_mode: codingMode,
           files: attachments,
@@ -312,10 +323,10 @@ export default function Chat() {
                     <div className={`w-20 h-20 rounded-3xl flex items-center justify-center mb-6 border ${codingMode ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-indigo-50 text-indigo-600 border-indigo-100'}`}>
                         {codingMode ? <Code2 size={40} /> : <Sparkles size={40} />}
                     </div>
-                    <h3 className="text-2xl font-bold text-slate-900 mb-2">{codingMode ? 'Nayaxa Coding Agent Siap' : 'How can I help you today?'}</h3>
-                    <p className="text-slate-500 text-sm">{codingMode ? 'Saya bisa membaca, menganalisis, dan memodifikasi kode proyek Anda.' : 'Say hi, upload a document, or ask about your dashboard performance statistics.'}</p>
+                    <h3 className="text-2xl font-bold text-slate-900 mb-2">{codingMode ? 'Nayaxa Coding Agent Siap' : 'Halo! Ada yang bisa Nayaxa bantu?'}</h3>
+                    <p className="text-slate-500 text-sm">{codingMode ? 'Saya bisa membaca, menganalisis, dan memodifikasi kode proyek Anda.' : 'Tanyakan apa saja, buat draf dokumen/surat resmi, atau unggah file untuk dianalisis.'}</p>
                     <div className="grid grid-cols-1 gap-3 w-full mt-8">
-                        {(codingMode ? ["Jelaskan struktur folder proyek", "Baca file nayaxaDeepSeekService.js"] : ["Analyze my team performance", "Explain latest alerts"]).map((t, i) => (
+                        {(codingMode ? ["Jelaskan struktur folder proyek", "Baca file nayaxaDeepSeekService.js"] : ["Apa saja tugas dan keahlian Nayaxa AI?", "Bantu buatkan draf surat resmi", "Analisis dan rangkum dokumen saya"]).map((t, i) => (
                             <button key={i} onClick={() => setInput(t)} className="p-4 rounded-2xl bg-slate-50 border border-slate-100 text-sm text-slate-600 hover:bg-white hover:border-indigo-500/30 transition-all text-left shadow-sm">{t}</button>
                         ))}
                     </div>
