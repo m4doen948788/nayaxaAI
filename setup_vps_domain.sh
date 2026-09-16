@@ -47,7 +47,6 @@ cat > /etc/nginx/sites-available/nayaxa.conf << 'EOF'
 # ============================================================
 server {
     listen 80;
-    listen [::]:80;
     server_name nayaxa.my.id www.nayaxa.my.id;
 
     root /var/www/nayaxa-engine/Frontend/dist;
@@ -76,7 +75,6 @@ server {
 # ============================================================
 server {
     listen 80;
-    listen [::]:80;
     server_name api.nayaxa.my.id;
 
     client_max_body_size 100M;
