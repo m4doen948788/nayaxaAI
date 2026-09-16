@@ -10,6 +10,7 @@ export interface User {
 interface AuthContextType {
   currentUser: User | null;
   setCurrentUser: (user: User | null) => void;
+  logout: () => void;
   isLoading: boolean;
 }
 
@@ -50,8 +51,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const logout = () => handleSetUser(null);
+
   return (
-    <AuthContext.Provider value={{ currentUser, setCurrentUser: handleSetUser, isLoading }}>
+    <AuthContext.Provider value={{ currentUser, setCurrentUser: handleSetUser, logout, isLoading }}>
       {children}
     </AuthContext.Provider>
   );

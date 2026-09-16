@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Send, Bot, User, Plus, Pin, Paperclip, Mic, Volume2, Sparkles, Search, MoreVertical, ChevronDown, Code2, Square, X, Image as ImageIcon, FileText, Copy, Check } from 'lucide-react';
+import { Send, Bot, User, Plus, Pin, Paperclip, Mic, Volume2, Sparkles, Search, MoreVertical, ChevronDown, Code2, Square, X, Image as ImageIcon, FileText, Copy, Check, LogIn, UserPlus, LogOut } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -59,21 +59,26 @@ const TableWithCopy = ({ children }: { children: React.ReactNode }) => {
             copied ? 'bg-emerald-500 text-white' : 'bg-indigo-600/80 hover:bg-indigo-600 text-white opacity-0 group-hover/table:opacity-100'
           }`}
         >
-          {copied ? <Check size={14} /> : <Copy size={14} />}
-          {copied ? 'Berhasil Disalin!' : 'Salin Tabel'}
+          {copied ? <Check size={14} className="text-white" /> : <Copy size={14} className="text-white" />}
+          {copied ? 'Tersalin' : 'Salin Tabel'}
         </button>
       </div>
-      <div className="overflow-x-auto p-4 custom-scrollbar">
-        <table ref={tableRef} className="w-full text-sm border-collapse min-w-[500px]">
-          {children}
-        </table>
+      <div className="overflow-x-auto p-4 custom-scrollbar" ref={tableRef}>
+        {children}
       </div>
     </div>
   );
 };
 
 export default function Chat() {
-  const { currentUser } = useAuth();
+  const { currentUser, setCurrentUser, logout } = useAuth();
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authName, setAuthName] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+
   const [sessions, setSessions] = useState<any[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
@@ -250,17 +255,72 @@ export default function Chat() {
   const handleStop = () => { if (abortControllerRef.current) abortControllerRef.current.abort(); };
   const startNewChat = () => { setActiveSessionId(null); setMessages([]); };
 
+  const handleAuthSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+
+    if (authMode === 'register') {
+      if (!authName.trim()) {
+        setAuthError('Silakan masukkan nama lengkap Anda.');
+        return;
+      }
+      const newUser = {
+        id: Date.now(),
+        name: authName.trim(),
+        role: 'Pengguna Terdaftar',
+        avatar: authName.trim()[0].toUpperCase()
+      };
+      setCurrentUser(newUser);
+      setIsAuthModalOpen(false);
+      setAuthName('');
+      setAuthEmail('');
+      setAuthPassword('');
+    } else {
+      if (!authEmail.trim()) {
+        setAuthError('Silakan masukkan nama atau email.');
+        return;
+      }
+      const userName = authEmail.includes('@') ? authEmail.split('@')[0] : authEmail.trim();
+      const loggedInUser = {
+        id: Date.now(),
+        name: userName,
+        role: 'Pengguna Terdaftar',
+        avatar: userName[0].toUpperCase()
+      };
+      setCurrentUser(loggedInUser);
+      setIsAuthModalOpen(false);
+      setAuthEmail('');
+      setAuthPassword('');
+    }
+  };
+
   return (
     <div className="flex h-full overflow-hidden bg-white text-slate-900 font-outfit">
       {/* Sidebar */}
-      <div className="w-80 bg-slate-50 border-r border-slate-200 flex flex-col">
-        <div className="p-6">
+      <div className="w-80 bg-slate-50 border-r border-slate-200 flex flex-col h-full shrink-0">
+        {/* Branding Header */}
+        <div className="p-5 pb-0 flex items-center gap-3">
+          <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center shrink-0 shadow-lg shadow-indigo-600/30">
+            <Bot className="text-white" size={24} />
+          </div>
+          <div>
+            <div className="font-bold text-lg tracking-tight text-slate-900 leading-tight">
+              Nayaxa <span className="text-indigo-600">AI</span>
+            </div>
+            <div className="text-[10px] text-slate-400 font-medium">Asisten Cerdas Publik</div>
+          </div>
+        </div>
+
+        {/* New Chat Button */}
+        <div className="p-5 pb-3">
           <button onClick={startNewChat} className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-2xl transition-all shadow-lg shadow-indigo-600/20">
-            <Plus size={18} /> New Conversation
+            <Plus size={18} /> Percakapan Baru
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-4 space-y-2">
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest px-2 mb-4">Recent Sessions</h3>
+
+        {/* Recent Sessions List */}
+        <div className="flex-1 overflow-y-auto px-4 space-y-2 custom-scrollbar">
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest px-2 mb-4">Riwayat Percakapan</h3>
           {loadingSessions ? (
             <div className="space-y-4 px-2">
                {[1,2,3].map(i => <div key={i} className="h-12 bg-white/10 rounded-xl animate-pulse" />)}
@@ -282,6 +342,48 @@ export default function Chat() {
                 <div className="text-[10px] text-slate-400 mt-1 font-bold uppercase">{new Date(sess.last_msg).toLocaleDateString()}</div>
               </motion.button>
             ))
+          )}
+        </div>
+
+        {/* Footer: User Status & Auth Buttons */}
+        <div className="p-4 mt-auto border-t border-slate-200 bg-white/70 backdrop-blur-sm space-y-3">
+          {/* User Status Badge */}
+          <div className="flex items-center gap-3 p-3 rounded-2xl bg-slate-50 border border-slate-200/80">
+            <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center text-white font-bold shrink-0 shadow-md">
+              {currentUser?.avatar || (currentUser?.name ? currentUser.name[0].toUpperCase() : 'P')}
+            </div>
+            <div className="overflow-hidden flex-1">
+              <p className="text-sm font-bold text-slate-900 truncate">{currentUser?.name || 'Pengguna Umum'}</p>
+              <p className="text-[11px] text-indigo-600 font-semibold truncate flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full inline-block"></span>
+                {currentUser?.role || '(Akses Publik)'}
+              </p>
+            </div>
+          </div>
+
+          {/* Auth Action Buttons */}
+          {!currentUser ? (
+            <div className="grid grid-cols-2 gap-2">
+              <button 
+                onClick={() => { setAuthMode('login'); setAuthError(''); setIsAuthModalOpen(true); }}
+                className="py-2.5 px-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-xs font-bold text-slate-700 hover:text-indigo-600 transition-all flex items-center justify-center gap-1.5 shadow-sm"
+              >
+                <LogIn size={14} /> Masuk
+              </button>
+              <button 
+                onClick={() => { setAuthMode('register'); setAuthError(''); setIsAuthModalOpen(true); }}
+                className="py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white transition-all flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/20"
+              >
+                <UserPlus size={14} /> Buat Akun
+              </button>
+            </div>
+          ) : (
+            <button 
+              onClick={logout}
+              className="w-full py-2.5 px-3 rounded-xl border border-rose-200 bg-rose-50/50 hover:bg-rose-100 text-xs font-bold text-rose-600 transition-all flex items-center justify-center gap-1.5"
+            >
+              <LogOut size={14} /> Keluar (Kembali ke Publik)
+            </button>
           )}
         </div>
       </div>
@@ -427,6 +529,137 @@ export default function Chat() {
             <p className="text-center text-[10px] text-slate-500 mt-4 uppercase tracking-tighter">{codingMode ? '⚠ Coding Agent ON — Nayaxa memiliki akses baca/tulis file proyek.' : 'Nayaxa AI can make mistakes. Verify important information.'}</p>
         </div>
       </div>
+
+      {/* Modal Masuk & Buat Akun */}
+      <AnimatePresence>
+        {isAuthModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="w-full max-w-md bg-white rounded-3xl p-6 md:p-8 shadow-2xl border border-slate-100 relative"
+            >
+              <button
+                onClick={() => setIsAuthModalOpen(false)}
+                className="absolute top-5 right-5 p-2 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100 transition-all"
+              >
+                <X size={20} />
+              </button>
+
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-indigo-600/30">
+                  <Bot size={26} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-slate-900">
+                    {authMode === 'login' ? 'Masuk ke Nayaxa AI' : 'Buat Akun Baru'}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {authMode === 'login' 
+                      ? 'Kelola riwayat percakapan Anda' 
+                      : 'Daftar akun gratis untuk menyimpan percakapan'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Mode Toggle Tabs */}
+              <div className="flex bg-slate-100 p-1 rounded-2xl mb-5">
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode('login'); setAuthError(''); }}
+                  className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all ${
+                    authMode === 'login' 
+                      ? 'bg-white text-indigo-600 shadow-sm' 
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  Masuk
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode('register'); setAuthError(''); }}
+                  className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all ${
+                    authMode === 'register' 
+                      ? 'bg-white text-indigo-600 shadow-sm' 
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  Buat Akun
+                </button>
+              </div>
+
+              {authError && (
+                <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-600 font-medium">
+                  {authError}
+                </div>
+              )}
+
+              <form onSubmit={handleAuthSubmit} className="space-y-4">
+                {authMode === 'register' && (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">Nama Lengkap</label>
+                    <input
+                      type="text"
+                      value={authName}
+                      onChange={(e) => setAuthName(e.target.value)}
+                      placeholder="Masukkan nama Anda"
+                      className="w-full p-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600/30 focus:border-indigo-600"
+                      required
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    {authMode === 'login' ? 'Nama atau Email' : 'Alamat Email'}
+                  </label>
+                  <input
+                    type="text"
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    placeholder="nama@email.com"
+                    className="w-full p-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600/30 focus:border-indigo-600"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Kata Sandi</label>
+                  <input
+                    type="password"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full p-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600/30 focus:border-indigo-600"
+                    required
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl transition-all shadow-lg shadow-indigo-600/20 mt-2"
+                >
+                  {authMode === 'login' ? 'Masuk Sekarang' : 'Daftar Akun'}
+                </button>
+              </form>
+
+              <div className="mt-5 text-center">
+                <p className="text-xs text-slate-400">
+                  Atau ingin tetap menggunakan tanpa login?{' '}
+                  <button
+                    type="button"
+                    onClick={() => setIsAuthModalOpen(false)}
+                    className="text-indigo-600 font-bold hover:underline"
+                  >
+                    Gunakan Mode Publik
+                  </button>
+                </p>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
