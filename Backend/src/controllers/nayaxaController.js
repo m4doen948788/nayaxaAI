@@ -616,10 +616,10 @@ const nayaxaController = {
                     h.session_id, 
                     MAX(h.created_at) as last_msg, 
                     COALESCE(
-                        NULLIF(MAX(s.title), ''), 
+                        NULLIF(NULLIF(MAX(s.title), ''), '0'), 
                         SUBSTRING((
                             SELECT content FROM nayaxa_chat_history 
-                            WHERE session_id = h.session_id
+                            WHERE session_id = h.session_id AND content != '0' AND TRIM(content) != ''
                             ORDER BY id ASC LIMIT 1
                         ), 1, 50)
                     ) as title,
@@ -629,6 +629,7 @@ const nayaxaController = {
                  LEFT JOIN nayaxa_pinned_sessions p ON h.session_id = p.session_id AND p.user_id = h.user_id
                  WHERE h.app_id = ? AND h.user_id = ? 
                  GROUP BY h.session_id
+                 HAVING title IS NOT NULL AND title != '0' AND TRIM(title) != ''
                  ORDER BY is_pinned DESC, last_msg DESC 
                  LIMIT 15`,
                 [app_id, userIdInt]

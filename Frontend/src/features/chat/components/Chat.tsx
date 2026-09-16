@@ -150,7 +150,12 @@ export default function Chat() {
     setLoadingSessions(true);
     try {
       const res = await api.getSessions(getEffectiveUserId());
-      if (res.success) setSessions(res.sessions || []);
+      if (res.success) {
+        const cleanSessions = (res.sessions || []).filter((s: any) => 
+          s && s.title && String(s.title).trim() !== '0' && String(s.title).trim() !== ''
+        );
+        setSessions(cleanSessions);
+      }
     } catch (err) { console.error(err); }
     setLoadingSessions(false);
   };
@@ -427,7 +432,6 @@ export default function Chat() {
                 <div className="font-bold text-lg tracking-tight text-slate-900 leading-tight">
                   Nayaxa <span className="text-indigo-600">AI</span>
                 </div>
-                <div className="text-[10px] text-slate-400 font-medium">Asisten Cerdas Publik</div>
               </div>
             </div>
             <button 
@@ -455,7 +459,9 @@ export default function Chat() {
                {[1,2,3].map(i => <div key={i} className="h-9 bg-slate-200/50 rounded-xl animate-pulse" />)}
             </div>
           ) : (
-            sessions.map((sess, i) => (
+            sessions
+              .filter(sess => sess && sess.title && String(sess.title).trim() !== '0')
+              .map((sess, i) => (
               <div
                 key={sess.session_id || i}
                 className="relative group session-menu-container"
@@ -489,7 +495,7 @@ export default function Chat() {
                         <Pin size={13} className="text-indigo-600 rotate-45 shrink-0" />
                       )}
                       <span className="truncate text-[13.5px] leading-snug">
-                        {sess.title || 'Untitled Conversation'}
+                        {(!sess.title || String(sess.title).trim() === '0') ? 'Untitled Conversation' : sess.title}
                       </span>
                     </div>
 
