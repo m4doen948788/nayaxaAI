@@ -634,8 +634,20 @@ const nayaxaController = {
                  LIMIT 15`,
                 [app_id, userIdInt]
             );
-            console.log('[Sessions] getChatSessions result length:', rows.length, 'rows:', rows);
-            res.json({ success: true, sessions: rows });
+            const cleanRows = (rows || []).map(r => {
+                let t = (r.title || '').trim();
+                t = t.replace(/^0\s*[-.:)]?\s*/i, '').replace(/^\d+[\.\)]\s*/, '').replace(/^[-*•]\s*/, '').trim();
+                return {
+                    ...r,
+                    title: t || 'Untitled Conversation'
+                };
+            }).filter(r => r.title && r.title !== '0');
+
+            // Clean existing rows in DB that start with 0
+            dbNayaxa.query(`UPDATE nayaxa_chat_sessions SET title = TRIM(SUBSTRING(title, 2)) WHERE title LIKE '0 %' OR title LIKE '0.%' OR title LIKE '0-%'`).catch(() => {});
+
+            console.log('[Sessions] getChatSessions result length:', cleanRows.length, 'rows:', cleanRows);
+            res.json({ success: true, sessions: cleanRows });
         } catch (err) {
             console.error('[Sessions] getChatSessions error:', err);
             res.status(500).json({ success: false, message: err.message });

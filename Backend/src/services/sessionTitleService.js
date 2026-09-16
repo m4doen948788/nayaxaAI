@@ -74,6 +74,8 @@ Output HANYA judul percakapan saja, jangan berikan teks pembuka atau penutup.`;
                 title = title.replace(/["'“”«»]/g, '').trim();
                 // If title is wrapped in markdown bold or header, strip it
                 title = title.replace(/^\**#*\s*/, '').replace(/\**$/, '').trim();
+                // Strip leading numbering or bullet points like "0. ", "0 ", "1. ", "- ", etc.
+                title = title.replace(/^(?:(?:\d+[\.\):\s-]*)|(?:[-*•]\s*))+/, '').trim();
                 
                 if (title.length > 100) {
                     title = title.substring(0, 97) + '...';

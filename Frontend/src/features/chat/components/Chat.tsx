@@ -146,14 +146,28 @@ export default function Chat() {
     }
   }, [messages, isTyping, streamingContent, activeSteps, thinkingThought]);
 
+  const formatSessionTitle = (rawTitle: any): string => {
+    if (!rawTitle) return 'Untitled Conversation';
+    let title = String(rawTitle).trim();
+    // Strip leading 0 or numbers (e.g., "0 ", "0. ", "0 - ", "1. ", etc.)
+    title = title.replace(/^0\s*[-.:)]?\s*/i, '');
+    title = title.replace(/^\d+[\.\)]\s*/, '');
+    title = title.replace(/^[-*•]\s*/, '');
+    title = title.trim();
+    return title || 'Untitled Conversation';
+  };
+
   const fetchSessions = async () => {
     setLoadingSessions(true);
     try {
       const res = await api.getSessions(getEffectiveUserId());
       if (res.success) {
-        const cleanSessions = (res.sessions || []).filter((s: any) => 
-          s && s.title && String(s.title).trim() !== '0' && String(s.title).trim() !== ''
-        );
+        const cleanSessions = (res.sessions || [])
+          .map((s: any) => ({
+            ...s,
+            title: formatSessionTitle(s.title)
+          }))
+          .filter((s: any) => s.title && s.title !== 'Untitled Conversation' && s.title !== '0');
         setSessions(cleanSessions);
       }
     } catch (err) { console.error(err); }
@@ -221,7 +235,7 @@ export default function Chat() {
     e.stopPropagation();
     setActiveMenuSessionId(null);
     setEditingSessionId(sess.session_id);
-    setEditingTitle(sess.title || 'Untitled Conversation');
+    setEditingTitle(formatSessionTitle(sess.title));
   };
 
   const handleSaveRename = async (sessionId: string) => {
@@ -495,7 +509,7 @@ export default function Chat() {
                         <Pin size={13} className="text-indigo-600 rotate-45 shrink-0" />
                       )}
                       <span className="truncate text-[13.5px] leading-snug">
-                        {(!sess.title || String(sess.title).trim() === '0') ? 'Untitled Conversation' : sess.title}
+                        {formatSessionTitle(sess.title)}
                       </span>
                     </div>
 
