@@ -505,7 +505,7 @@ export default function Chat() {
                     }`}
                   >
                     <div className="flex items-center gap-2 truncate flex-1 mr-1">
-                      {sess.is_pinned && (
+                      {Boolean(sess.is_pinned) && (
                         <Pin size={13} className="text-indigo-600 rotate-45 shrink-0" />
                       )}
                       <span className="truncate text-[13.5px] leading-snug">

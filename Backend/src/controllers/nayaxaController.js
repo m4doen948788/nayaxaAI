@@ -639,7 +639,8 @@ const nayaxaController = {
                 t = t.replace(/^0\s*[-.:)]?\s*/i, '').replace(/^\d+[\.\)]\s*/, '').replace(/^[-*•]\s*/, '').trim();
                 return {
                     ...r,
-                    title: t || 'Untitled Conversation'
+                    title: t || 'Untitled Conversation',
+                    is_pinned: Boolean(r.is_pinned)
                 };
             }).filter(r => r.title && r.title !== '0');
 
