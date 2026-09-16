@@ -708,6 +708,27 @@ const nayaxaController = {
         }
     },
 
+    renameChatSession: async (req, res) => {
+        try {
+            const { session_id } = req.params;
+            const { title, user_id } = req.body;
+            const app_id = req.nayaxaApp.id;
+            if (!title || !title.trim()) {
+                return res.status(400).json({ success: false, message: 'Judul tidak boleh kosong.' });
+            }
+            await dbNayaxa.query(
+                `INSERT INTO nayaxa_chat_sessions (app_id, user_id, session_id, title)
+                 VALUES (?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE title = VALUES(title), updated_at = NOW()`,
+                [app_id, user_id || 0, session_id, title.trim()]
+            );
+            res.json({ success: true, message: 'Judul percakapan berhasil diubah.' });
+        } catch (error) {
+            console.error('Rename Session Error:', error);
+            res.status(500).json({ success: false, message: error.message });
+        }
+    },
+
     deleteChatSessionsBatch: async (req, res) => {
         try {
             const { session_ids } = req.body;

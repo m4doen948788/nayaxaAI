@@ -109,6 +109,10 @@ export const createNayaxaApi = (apiKey: string) => {
       const res = await client.delete(`/session/${session_id}`);
       return res.data;
     },
+    renameSession: async (session_id: string, title: string, user_id?: number) => {
+      const res = await client.put(`/session/${session_id}/rename`, { title, user_id });
+      return res.data;
+    },
     togglePinSession: async (session_id: string, user_id: number, pin: boolean) => {
       const res = await client.post(`/session/${session_id}/pin`, { user_id, pin });
       return res.data;

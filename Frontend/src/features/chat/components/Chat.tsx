@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Send, Bot, User, Plus, Pin, Paperclip, Mic, Volume2, Sparkles, Search, MoreVertical, ChevronDown, Code2, Square, X, Image as ImageIcon, FileText, Copy, Check, LogIn, UserPlus, LogOut } from 'lucide-react';
+import { Send, Bot, User, Plus, Pin, Paperclip, Mic, Volume2, Sparkles, Search, MoreVertical, ChevronDown, Code2, Square, X, Image as ImageIcon, FileText, Copy, Check, LogIn, UserPlus, LogOut, Share2, Pencil, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -79,6 +79,11 @@ export default function Chat() {
   const [authPassword, setAuthPassword] = useState('');
   const [authError, setAuthError] = useState('');
 
+  const [activeMenuSessionId, setActiveMenuSessionId] = useState<string | null>(null);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
   const [sessions, setSessions] = useState<any[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
@@ -146,6 +151,86 @@ export default function Chat() {
       const res = await api.getHistoryBySession(id);
       if (res.success) setMessages(res.history);
     } catch (err) { console.error(err); }
+  };
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.session-menu-container')) {
+        setActiveMenuSessionId(null);
+      }
+    };
+    document.addEventListener('click', handleOutsideClick);
+    return () => document.removeEventListener('click', handleOutsideClick);
+  }, []);
+
+  useEffect(() => {
+    if (toastMessage) {
+      const timer = setTimeout(() => setToastMessage(null), 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [toastMessage]);
+
+  const handleTogglePin = async (e: React.MouseEvent, sess: any) => {
+    e.stopPropagation();
+    setActiveMenuSessionId(null);
+    try {
+      const effectiveId = getEffectiveUserId();
+      await api.togglePinSession(sess.session_id, effectiveId, !sess.is_pinned);
+      fetchSessions();
+      setToastMessage(sess.is_pinned ? 'Pin dibatalkan' : 'Percakapan disematkan');
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    setActiveMenuSessionId(null);
+    try {
+      await api.deleteSession(sessionId);
+      if (activeSessionId === sessionId) {
+        startNewChat();
+      }
+      fetchSessions();
+      setToastMessage('Percakapan dihapus');
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleStartRename = (e: React.MouseEvent, sess: any) => {
+    e.stopPropagation();
+    setActiveMenuSessionId(null);
+    setEditingSessionId(sess.session_id);
+    setEditingTitle(sess.title || 'Untitled Conversation');
+  };
+
+  const handleSaveRename = async (sessionId: string) => {
+    if (!editingTitle.trim()) {
+      setEditingSessionId(null);
+      return;
+    }
+    try {
+      const effectiveId = getEffectiveUserId();
+      await api.renameSession(sessionId, editingTitle.trim(), effectiveId);
+      setEditingSessionId(null);
+      fetchSessions();
+      setToastMessage('Judul berhasil diubah');
+    } catch (err) {
+      console.error(err);
+      setEditingSessionId(null);
+    }
+  };
+
+  const handleShareSession = (e: React.MouseEvent, sess: any) => {
+    e.stopPropagation();
+    setActiveMenuSessionId(null);
+    const shareUrl = `${window.location.origin}/chat?session=${sess.session_id}`;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(shareUrl);
+      setToastMessage('Tautan percakapan disalin');
+    }
   };
 
   const processFiles = (files: File[]) => {
@@ -318,29 +403,116 @@ export default function Chat() {
           </button>
         </div>
 
-        {/* Recent Sessions List */}
-        <div className="flex-1 overflow-y-auto px-4 space-y-2 custom-scrollbar">
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest px-2 mb-4">Riwayat Percakapan</h3>
+        {/* Recents Sessions List */}
+        <div className="flex-1 overflow-y-auto px-3 space-y-1 custom-scrollbar">
+          <div className="text-xs font-semibold text-slate-400 px-3 py-2">Recents</div>
           {loadingSessions ? (
-            <div className="space-y-4 px-2">
-               {[1,2,3].map(i => <div key={i} className="h-12 bg-white/10 rounded-xl animate-pulse" />)}
+            <div className="space-y-3 px-2">
+               {[1,2,3].map(i => <div key={i} className="h-9 bg-slate-200/50 rounded-xl animate-pulse" />)}
             </div>
           ) : (
             sessions.map((sess, i) => (
-              <motion.button
-                key={i}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: i * 0.05 }}
-                onClick={() => loadSession(sess.session_id)}
-                className={`w-full group text-left p-4 rounded-2xl transition-all border ${activeSessionId === sess.session_id ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'border-transparent text-slate-500 hover:bg-white hover:shadow-sm'}`}
+              <div
+                key={sess.session_id || i}
+                className="relative group session-menu-container"
               >
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-bold truncate flex-1">{sess.title || 'Untitled Conversation'}</span>
-                  {sess.is_pinned && <Pin size={12} className="text-indigo-600 shrink-0" />}
-                </div>
-                <div className="text-[10px] text-slate-400 mt-1 font-bold uppercase">{new Date(sess.last_msg).toLocaleDateString()}</div>
-              </motion.button>
+                {editingSessionId === sess.session_id ? (
+                  <div className="px-3 py-1.5 flex items-center gap-1 bg-white border border-indigo-300 rounded-xl shadow-sm">
+                    <input
+                      type="text"
+                      value={editingTitle}
+                      onChange={(e) => setEditingTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveRename(sess.session_id);
+                        if (e.key === 'Escape') setEditingSessionId(null);
+                      }}
+                      onBlur={() => handleSaveRename(sess.session_id)}
+                      autoFocus
+                      className="w-full text-sm bg-transparent border-none focus:outline-none text-slate-800"
+                    />
+                  </div>
+                ) : (
+                  <div
+                    onClick={() => loadSession(sess.session_id)}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm transition-all cursor-pointer ${
+                      activeSessionId === sess.session_id 
+                        ? 'bg-slate-200/70 text-slate-900 font-medium' 
+                        : 'text-slate-700 hover:bg-slate-200/50 hover:text-slate-900'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 truncate flex-1 mr-1">
+                      {sess.is_pinned && (
+                        <Pin size={13} className="text-indigo-600 rotate-45 shrink-0" />
+                      )}
+                      <span className="truncate text-[13.5px] leading-snug">
+                        {sess.title || 'Untitled Conversation'}
+                      </span>
+                    </div>
+
+                    {/* Three-dots button */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveMenuSessionId(
+                          activeMenuSessionId === sess.session_id ? null : sess.session_id
+                        );
+                      }}
+                      className={`p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-300/50 transition-all shrink-0 ${
+                        activeMenuSessionId === sess.session_id 
+                          ? 'opacity-100 bg-slate-300/50 text-slate-700' 
+                          : 'opacity-0 group-hover:opacity-100'
+                      }`}
+                    >
+                      <MoreVertical size={16} />
+                    </button>
+                  </div>
+                )}
+
+                {/* Dropdown Popup Menu */}
+                {activeMenuSessionId === sess.session_id && (
+                  <div
+                    className="absolute left-[70%] top-6 z-50 w-52 bg-white rounded-2xl p-1.5 shadow-2xl border border-slate-100 backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      onClick={(e) => handleShareSession(e, sess)}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-slate-700 hover:bg-slate-50 transition-all text-left font-medium"
+                    >
+                      <Share2 size={16} className="text-slate-600 shrink-0" />
+                      <span>Share conversation</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => handleTogglePin(e, sess)}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-slate-700 hover:bg-slate-50 transition-all text-left font-medium"
+                    >
+                      <Pin size={16} className="text-slate-600 shrink-0" />
+                      <span>{sess.is_pinned ? 'Unpin' : 'Pin'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => handleStartRename(e, sess)}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-slate-700 hover:bg-slate-50 transition-all text-left font-medium"
+                    >
+                      <Pencil size={16} className="text-slate-600 shrink-0" />
+                      <span>Rename</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => handleDeleteSession(e, sess.session_id)}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-rose-600 hover:bg-rose-50 transition-all text-left font-medium"
+                    >
+                      <Trash2 size={16} className="text-rose-600 shrink-0" />
+                      <span>Delete</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             ))
           )}
         </div>
@@ -660,6 +832,21 @@ export default function Chat() {
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Toast Notification */}
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900/90 text-white text-xs font-semibold px-4 py-2.5 rounded-2xl shadow-xl backdrop-blur-md flex items-center gap-2"
+          >
+            <Check size={14} className="text-emerald-400" />
+            <span>{toastMessage}</span>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

@@ -91,6 +91,7 @@ router.get('/proactive-insight', nayaxaController.getProactiveInsight);
 router.get('/sessions', nayaxaController.getChatSessions);
 router.get('/history/:session_id', nayaxaController.getChatHistoryBySession);
 router.delete('/session/:session_id', nayaxaController.deleteChatSession);
+router.put('/session/:session_id/rename', nayaxaController.renameChatSession);
 router.post('/sessions/delete-batch', nayaxaController.deleteChatSessionsBatch);
 router.post('/session/:session_id/pin', nayaxaController.togglePinSession);
 router.post('/chat', nayaxaController.chat);
