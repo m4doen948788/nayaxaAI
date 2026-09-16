@@ -346,23 +346,32 @@ export default function Chat() {
         </div>
 
         {/* Footer: User Status & Auth Buttons */}
-        <div className="p-4 mt-auto border-t border-slate-200 bg-white/70 backdrop-blur-sm space-y-3">
-          {/* User Status Badge */}
-          <div className="flex items-center gap-3 p-3 rounded-2xl bg-slate-50 border border-slate-200/80">
-            <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center text-white font-bold shrink-0 shadow-md">
-              {currentUser?.avatar || (currentUser?.name ? currentUser.name[0].toUpperCase() : 'P')}
-            </div>
-            <div className="overflow-hidden flex-1">
-              <p className="text-sm font-bold text-slate-900 truncate">{currentUser?.name || 'Pengguna Umum'}</p>
-              <p className="text-[11px] text-indigo-600 font-semibold truncate flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full inline-block"></span>
-                {currentUser?.role || '(Akses Publik)'}
-              </p>
-            </div>
-          </div>
+        <div className="p-4 mt-auto border-t border-slate-200 bg-white/70 backdrop-blur-sm">
+          {currentUser ? (
+            <div className="space-y-3">
+              {/* User Status Badge (Hanya tampil saat sudah login) */}
+              <div className="flex items-center gap-3 p-3 rounded-2xl bg-slate-50 border border-slate-200/80">
+                <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center text-white font-bold shrink-0 shadow-md">
+                  {currentUser.avatar || currentUser.name[0]?.toUpperCase() || 'U'}
+                </div>
+                <div className="overflow-hidden flex-1">
+                  <p className="text-sm font-bold text-slate-900 truncate">{currentUser.name}</p>
+                  <p className="text-[11px] text-indigo-600 font-semibold truncate flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full inline-block"></span>
+                    {currentUser.role || 'Pengguna'}
+                  </p>
+                </div>
+              </div>
 
-          {/* Auth Action Buttons */}
-          {!currentUser ? (
+              {/* Tombol Keluar */}
+              <button 
+                onClick={logout}
+                className="w-full py-2.5 px-3 rounded-xl border border-rose-200 bg-rose-50/50 hover:bg-rose-100 text-xs font-bold text-rose-600 transition-all flex items-center justify-center gap-1.5"
+              >
+                <LogOut size={14} /> Keluar Akun
+              </button>
+            </div>
+          ) : (
             <div className="grid grid-cols-2 gap-2">
               <button 
                 onClick={() => { setAuthMode('login'); setAuthError(''); setIsAuthModalOpen(true); }}
@@ -377,13 +386,6 @@ export default function Chat() {
                 <UserPlus size={14} /> Buat Akun
               </button>
             </div>
-          ) : (
-            <button 
-              onClick={logout}
-              className="w-full py-2.5 px-3 rounded-xl border border-rose-200 bg-rose-50/50 hover:bg-rose-100 text-xs font-bold text-rose-600 transition-all flex items-center justify-center gap-1.5"
-            >
-              <LogOut size={14} /> Keluar (Kembali ke Publik)
-            </button>
           )}
         </div>
       </div>
