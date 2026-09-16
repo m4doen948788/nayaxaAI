@@ -60,7 +60,9 @@ const buildExportDownloadUrl = (req, downloadPath) => {
     
     // If incoming host header contains the production domain,
     // force rewrite base to the official secure SSL subdomain in production.
-    if (host.includes('bapperida-ppm.my.id')) {
+    if (host.includes('nayaxa.my.id')) {
+        base = 'https://api.nayaxa.my.id';
+    } else if (host.includes('bapperida-ppm.my.id')) {
         base = 'https://api-nayaxa.bapperida-ppm.my.id';
     } else if (host.includes('localhost') || host.includes('127.0.0.1')) {
         // Force local base URL when testing locally to bypass production environment configuration overrides

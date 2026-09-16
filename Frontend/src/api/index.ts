@@ -7,7 +7,9 @@ const isLocal =
 
 const API_BASE_URL = isLocal
   ? `http://${window.location.hostname}:6001`
-  : 'https://api-nayaxa.bapperida-ppm.my.id';
+  : (window.location.hostname.includes('nayaxa.my.id')
+      ? 'https://api.nayaxa.my.id'
+      : 'https://api-nayaxa.bapperida-ppm.my.id');
 
 export const createNayaxaApi = (apiKey: string) => {
   const client = axios.create({

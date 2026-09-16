@@ -38,7 +38,9 @@ export default function NayaxaAssistant({
   const api = createNayaxaApi(
     baseUrl || (window.location.hostname === 'localhost' 
       ? `http://localhost:6001` 
-      : `https://api-nayaxa.bapperida-ppm.my.id`), 
+      : (window.location.hostname.includes('nayaxa.my.id')
+          ? 'https://api.nayaxa.my.id'
+          : `https://api-nayaxa.bapperida-ppm.my.id`)), 
     apiKey
   ); 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -238,20 +240,27 @@ export default function NayaxaAssistant({
     // Base URL configuration for API calls
     const baseUrl = window.location.hostname === 'localhost' 
       ? 'http://localhost:6001' 
-      : 'https://api-nayaxa.bapperida-ppm.my.id';
+      : (window.location.hostname.includes('nayaxa.my.id')
+          ? 'https://api.nayaxa.my.id'
+          : 'https://api-nayaxa.bapperida-ppm.my.id');
 
     const fixLocalhostLinks = (text: string) => {
       if (!text || window.location.hostname === 'localhost') return text;
       
       let cleaned = text;
+      const targetDomain = window.location.hostname.includes('nayaxa.my.id')
+        ? 'https://api.nayaxa.my.id'
+        : 'https://api-nayaxa.bapperida-ppm.my.id';
+
       // Ganti semua yang pakai localhost atau domain:6001 menjadi subdomain resmi
-      cleaned = cleaned.replace(/(https?:\/\/)?localhost(:\d+)?/g, 'https://api-nayaxa.bapperida-ppm.my.id');
+      cleaned = cleaned.replace(/(https?:\/\/)?localhost(:\d+)?/g, targetDomain);
       
       // Juga tangkap jika ada IP 127.0.0.1
-      cleaned = cleaned.replace(/(https?:\/\/)?127\.0\.0\.1(:\d+)?/g, 'https://api-nayaxa.bapperida-ppm.my.id');
+      cleaned = cleaned.replace(/(https?:\/\/)?127\.0\.0\.1(:\d+)?/g, targetDomain);
       
-      // Ganti bapperida-ppm.my.id:6001 dengan subdomain resmi untuk mencegah SSL error
-      cleaned = cleaned.replace(/(https?:\/\/)?bapperida-ppm\.my\.id:6001/g, 'https://api-nayaxa.bapperida-ppm.my.id');
+      // Ganti port 6001 dengan subdomain resmi untuk mencegah SSL error
+      cleaned = cleaned.replace(/(https?:\/\/)?bapperida-ppm\.my\.id:6001/g, targetDomain);
+      cleaned = cleaned.replace(/(https?:\/\/)?nayaxa\.my\.id:6001/g, targetDomain);
       
       return cleaned;
     };    const offset = -new Date().getTimezoneOffset() / 60;
