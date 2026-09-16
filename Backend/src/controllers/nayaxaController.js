@@ -611,28 +611,46 @@ const nayaxaController = {
             const app_id = req.nayaxaApp.id;
             console.log('[Sessions] getChatSessions request:', { user_id, app_id, query: req.query });
             const userIdInt = parseInt(user_id, 10) || 0;
+            const userConditionSessions = userIdInt > 0 ? 's.app_id = ? AND s.user_id = ?' : 's.app_id = ?';
+            const userConditionHistory = userIdInt > 0 ? 'h.app_id = ? AND h.user_id = ?' : 'h.app_id = ?';
+            const queryParams = userIdInt > 0 ? [app_id, userIdInt, app_id, userIdInt] : [app_id, app_id];
+
             const [rows] = await dbNayaxa.query(
                 `SELECT 
-                    h.session_id, 
-                    MAX(h.created_at) as last_msg, 
-                    COALESCE(
-                        NULLIF(NULLIF(MAX(s.title), ''), '0'), 
-                        SUBSTRING((
-                            SELECT content FROM nayaxa_chat_history 
-                            WHERE session_id = h.session_id AND content != '0' AND TRIM(content) != ''
-                            ORDER BY id ASC LIMIT 1
-                        ), 1, 50)
-                    ) as title,
-                    (MAX(p.id) IS NOT NULL) as is_pinned
-                 FROM nayaxa_chat_history h 
-                 LEFT JOIN nayaxa_chat_sessions s ON h.session_id = s.session_id
-                 LEFT JOIN nayaxa_pinned_sessions p ON h.session_id = p.session_id AND p.user_id = h.user_id
-                 WHERE h.app_id = ? AND h.user_id = ? 
-                 GROUP BY h.session_id
-                 HAVING title IS NOT NULL AND title != '0' AND TRIM(title) != ''
-                 ORDER BY is_pinned DESC, last_msg DESC 
-                 LIMIT 15`,
-                [app_id, userIdInt]
+                    sess.session_id,
+                    COALESCE(sess.title, 'Percakapan') as title,
+                    sess.last_msg,
+                    (p.id IS NOT NULL) as is_pinned
+                FROM (
+                    SELECT 
+                        s.session_id, 
+                        s.app_id, 
+                        s.user_id, 
+                        s.title, 
+                        COALESCE(MAX(h.created_at), s.updated_at, s.created_at) as last_msg
+                    FROM nayaxa_chat_sessions s
+                    LEFT JOIN nayaxa_chat_history h ON s.session_id = h.session_id
+                    WHERE ${userConditionSessions}
+                    GROUP BY s.session_id, s.app_id, s.user_id, s.title, s.updated_at, s.created_at
+
+                    UNION
+
+                    SELECT 
+                        h.session_id,
+                        h.app_id,
+                        h.user_id,
+                        SUBSTRING((SELECT content FROM nayaxa_chat_history WHERE session_id = h.session_id ORDER BY id ASC LIMIT 1), 1, 50) as title,
+                        MAX(h.created_at) as last_msg
+                    FROM nayaxa_chat_history h
+                    LEFT JOIN nayaxa_chat_sessions s ON h.session_id = s.session_id AND s.user_id = h.user_id
+                    WHERE ${userConditionHistory} AND s.id IS NULL
+                    GROUP BY h.session_id, h.app_id, h.user_id
+                ) sess
+                LEFT JOIN nayaxa_pinned_sessions p ON sess.session_id = p.session_id AND p.user_id = sess.user_id
+                WHERE sess.title IS NOT NULL AND TRIM(sess.title) != '' AND sess.title != '0'
+                ORDER BY is_pinned DESC, sess.last_msg DESC
+                LIMIT 25`,
+                queryParams
             );
             const cleanRows = (rows || []).map(r => {
                 let t = (r.title || '').trim();
