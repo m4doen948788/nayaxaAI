@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Send, Bot, User, Plus, Pin, Paperclip, Mic, Volume2, Sparkles, Search, MoreVertical, ChevronDown, Code2, Square, X, Image as ImageIcon, FileText, Copy, Check, LogIn, UserPlus, LogOut, Share2, Pencil, Trash2 } from 'lucide-react';
+import { Send, Bot, User, Plus, Pin, Paperclip, Mic, Volume2, Sparkles, Search, MoreVertical, ChevronDown, Code2, Square, X, Image as ImageIcon, FileText, Copy, Check, LogIn, UserPlus, LogOut, Share2, Pencil, Trash2, PanelLeft, PanelLeftClose } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -79,6 +79,16 @@ export default function Chat() {
   const [authPassword, setAuthPassword] = useState('');
   const [authError, setAuthError] = useState('');
 
+  const isMobileOrPWA = () => {
+    if (typeof window === 'undefined') return false;
+    const isMobile = window.innerWidth < 768;
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+      (window.navigator as any).standalone === true;
+    return isMobile || isStandalone;
+  };
+
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => !isMobileOrPWA());
+
   const [activeMenuSessionId, setActiveMenuSessionId] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
@@ -147,6 +157,9 @@ export default function Chat() {
 
   const loadSession = async (id: string) => {
     setActiveSessionId(id);
+    if (isMobileOrPWA()) {
+      setIsSidebarOpen(false);
+    }
     try {
       const res = await api.getHistoryBySession(id);
       if (res.success) setMessages(res.history);
@@ -338,7 +351,13 @@ export default function Chat() {
   };
 
   const handleStop = () => { if (abortControllerRef.current) abortControllerRef.current.abort(); };
-  const startNewChat = () => { setActiveSessionId(null); setMessages([]); };
+  const startNewChat = () => { 
+    setActiveSessionId(null); 
+    setMessages([]); 
+    if (isMobileOrPWA()) {
+      setIsSidebarOpen(false);
+    }
+  };
 
   const handleAuthSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -381,20 +400,45 @@ export default function Chat() {
 
   return (
     <div className="flex h-full overflow-hidden bg-white text-slate-900 font-outfit">
+      {/* Mobile / PWA Backdrop */}
+      {isSidebarOpen && (
+        <div 
+          onClick={() => setIsSidebarOpen(false)}
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-30 md:hidden transition-opacity"
+        />
+      )}
+
       {/* Sidebar */}
-      <div className="w-80 bg-slate-50 border-r border-slate-200 flex flex-col h-full shrink-0">
-        {/* Branding Header */}
-        <div className="p-5 pb-0 flex items-center gap-3">
-          <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center shrink-0 shadow-lg shadow-indigo-600/30">
-            <Bot className="text-white" size={24} />
-          </div>
-          <div>
-            <div className="font-bold text-lg tracking-tight text-slate-900 leading-tight">
-              Nayaxa <span className="text-indigo-600">AI</span>
+      <aside 
+        className={`fixed inset-y-0 left-0 z-40 md:static md:z-auto bg-slate-50 border-r border-slate-200 flex flex-col h-full transition-all duration-300 ease-in-out shrink-0 overflow-hidden ${
+          isSidebarOpen 
+            ? 'w-80 translate-x-0 opacity-100 shadow-2xl md:shadow-none' 
+            : '-translate-x-full md:translate-x-0 md:w-0 md:border-r-0 md:opacity-0 pointer-events-none'
+        }`}
+      >
+        <div className="w-80 flex flex-col h-full shrink-0">
+          {/* Branding Header */}
+          <div className="p-5 pb-0 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center shrink-0 shadow-lg shadow-indigo-600/30">
+                <Bot className="text-white" size={24} />
+              </div>
+              <div>
+                <div className="font-bold text-lg tracking-tight text-slate-900 leading-tight">
+                  Nayaxa <span className="text-indigo-600">AI</span>
+                </div>
+                <div className="text-[10px] text-slate-400 font-medium">Asisten Cerdas Publik</div>
+              </div>
             </div>
-            <div className="text-[10px] text-slate-400 font-medium">Asisten Cerdas Publik</div>
+            <button 
+              type="button"
+              onClick={() => setIsSidebarOpen(false)}
+              title="Tutup Sidebar"
+              className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-all"
+            >
+              <PanelLeftClose size={18} />
+            </button>
           </div>
-        </div>
 
         {/* New Chat Button */}
         <div className="p-5 pb-3">
@@ -472,7 +516,7 @@ export default function Chat() {
                 {/* Dropdown Popup Menu */}
                 {activeMenuSessionId === sess.session_id && (
                   <div
-                    className="absolute left-[70%] top-6 z-50 w-52 bg-white rounded-2xl p-1.5 shadow-2xl border border-slate-100 backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
+                    className="absolute right-2 top-9 z-50 w-48 bg-white rounded-2xl p-1.5 shadow-xl border border-slate-200/80 backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <button
@@ -561,17 +605,27 @@ export default function Chat() {
           )}
         </div>
       </div>
+    </aside>
 
       {/* Main Area */}
       <div className="flex-1 flex flex-col min-h-0 relative bg-white shadow-inner">
-        <header className="p-6 border-b border-slate-100 flex items-center justify-between backdrop-blur-md z-10 bg-white/80">
-          <div className="flex items-center gap-4">
-            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${activeSessionId ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : 'bg-slate-100 text-slate-400'}`}>
-              <Bot size={24} />
+        <header className="px-4 py-3.5 md:px-6 md:py-4 border-b border-slate-100 flex items-center justify-between backdrop-blur-md z-10 bg-white/80">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setIsSidebarOpen(prev => !prev)}
+              title={isSidebarOpen ? "Sembunyikan Sidebar" : "Buka Sidebar"}
+              className="p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-indigo-600 border border-slate-200 transition-all flex items-center justify-center shrink-0 shadow-sm"
+            >
+              <PanelLeft size={18} />
+            </button>
+
+            <div className={`w-10 h-10 md:w-11 md:h-11 rounded-2xl flex items-center justify-center ${activeSessionId ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : 'bg-slate-100 text-slate-400'}`}>
+              <Bot size={22} />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="font-bold text-lg text-slate-900">Nayaxa Assistant</h2>
+                <h2 className="font-bold text-base md:text-lg text-slate-900">Nayaxa Assistant</h2>
                 {activeSessionId && (
                    <div className={`w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-black border border-slate-200 ${
                      (thinkingBrain || lastBrainUsed || 'DeepSeek').toLowerCase().includes('deepseek') ? 'bg-teal-500' : 'bg-indigo-500'
@@ -582,7 +636,7 @@ export default function Chat() {
               </div>
               <div className="flex items-center gap-2">
                 <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
-                <span className="text-[13px] text-slate-500 font-medium">Asisten AI Cerdas Anda</span>
+                <span className="text-[12px] md:text-[13px] text-slate-500 font-medium">Asisten AI Cerdas Anda</span>
               </div>
             </div>
           </div>
@@ -615,7 +669,11 @@ export default function Chat() {
                   {m.role === 'user' ? <User size={18} /> : <Bot size={18} />}
                 </div>
                 <div className={`max-w-[75%] p-6 rounded-3xl text-[16px] shadow-sm ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-slate-50 border border-slate-200 rounded-tl-none'}`}>
-                  <div className="prose prose-slate max-w-none text-slate-700 leading-relaxed font-normal text-[16px] text-justify prose-p:my-1 prose-headings:mb-2 prose-headings:mt-4">
+                  <div className={`prose max-w-none leading-relaxed font-normal text-[16px] text-justify prose-p:my-1 prose-headings:mb-2 prose-headings:mt-4 ${
+                    m.role === 'user'
+                      ? 'prose-invert text-white prose-p:text-white prose-headings:text-white prose-strong:text-white prose-code:text-white prose-a:text-white'
+                      : 'prose-slate text-slate-700'
+                  }`}>
                     {(typeof m.content === 'string' ? m.content.replace(/\[FILE:[\s\S]*?ACTION:[\s\S]*?\]/gi, '').trim() || (m.role === 'user' ? '*(Mengirimkan lampiran)*' : '') : m.content || '').split(/(\[NAYAXA_PROPOSAL:[^\]]+\])/g).map((part: string, index: number) => {
                       if (part.startsWith('[NAYAXA_PROPOSAL:')) {
                         const id = part.match(/\[NAYAXA_PROPOSAL:([^\]]+)\]/)?.[1] || '';
