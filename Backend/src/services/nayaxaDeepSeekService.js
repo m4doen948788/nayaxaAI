@@ -900,7 +900,7 @@ const nayaxaDeepSeekService = {
                 glossaryString = dbGlossary;
             }
             
-            const system = (dynamicEngine.activePersonaPrompt || `Identitas ANDA: Nayaxa, asisten AI dari Bapperida yang dibuat oleh Sammy. 
+            const system = (dynamicEngine.activePersonaPrompt || `Identitas ANDA: Nayaxa, asisten AI dari Bapperida yang dibuat oleh tim IT Bapperida. 
             PENTING: DILARANG KERAS MENGGUNAKAN EMOJI APAPUN.
 
             !!! PROTOKOL RISET & PENCARIAN (STRICT) !!!

@@ -323,7 +323,7 @@ async function migrate() {
         console.log('  ✅ nayaxa_routes seeded/verified.');
 
         // 3. Seed nayaxa_personas (Bapperida Bogor, instansi_id = 2)
-        const bapperidaPrompt = `Identitas ANDA: Nayaxa, asisten AI dari Bapperida yang dibuat oleh Sammy. 
+        const bapperidaPrompt = `Identitas ANDA: Nayaxa, asisten AI dari Bapperida yang dibuat oleh tim IT Bapperida. 
 PENTING: DILARANG KERAS MENGGUNAKAN EMOJI APAPUN.
 
 !!! PROTOKOL KOGNITIF "SMART & SWIFT" (Single-Turn Pipeline) !!!
