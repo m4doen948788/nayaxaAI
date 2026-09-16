@@ -5,7 +5,7 @@ import NayaxaChart from '@/src/components/NayaxaChart';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Mermaid from '@/src/components/Mermaid';
-import { Send, Bot, User, Zap, X, ChevronDown, Paperclip, FileText, Image as ImageIcon, History, Plus, Trash2, ArrowLeft, MessageSquare } from 'lucide-react';
+import { Send, Bot, User, Zap, X, ChevronDown, Paperclip, FileText, Image as ImageIcon, History, Plus, Trash2, ArrowLeft, MessageSquare, Sparkles } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 interface NayaxaAssistantProps {
@@ -320,12 +320,12 @@ export default function NayaxaAssistant({
       <div className="bg-gradient-to-r from-indigo-600 to-violet-700 p-4 text-white flex items-center justify-between shadow-md relative overflow-hidden">
         <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-3xl" />
         <div className="flex items-center gap-3 relative z-10">
-            <div className="p-2 bg-white/20 rounded-xl backdrop-blur-md">
-                <Bot size={20} className="text-white" />
+            <div className="p-2 bg-white/20 rounded-xl backdrop-blur-md shadow-inner">
+                <Sparkles size={20} className="text-white" />
             </div>
             <div className="flex flex-col">
-                <h3 className="font-bold text-sm leading-tight">Nayaxa Assistant</h3>
-                <span className="text-[10px] text-white/70 font-medium tracking-wide">AI AGENT MODULE V4.3</span>
+                <h3 className="font-bold text-sm leading-tight">{title || 'Bapperida AI'}</h3>
+                <span className="text-[10px] text-white/70 font-medium tracking-wide">{subtitle || 'AI AGENT MODULE V4.3'}</span>
             </div>
         </div>
         <div className="flex items-center gap-2.5 relative z-10">
@@ -411,11 +411,11 @@ export default function NayaxaAssistant({
           <>
             {messages.length === 0 && (
                 <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-40">
-                    <div className="w-16 h-16 bg-indigo-50 rounded-3xl flex items-center justify-center mb-4">
-                        <Bot size={32} className="text-indigo-300" />
+                    <div className="w-16 h-16 bg-indigo-50 rounded-3xl flex items-center justify-center mb-4 border border-indigo-100">
+                        <Sparkles size={32} className="text-indigo-400" />
                     </div>
                     <h4 className="text-sm font-bold text-slate-800">Bagaimana saya bisa membantu hari ini?</h4>
-                    <p className="text-[11px] text-slate-500 mt-2 max-w-[200px]">Tanyakan tentang kegiatan, statistik, atau analisis database Anda.</p>
+                    <p className="text-[11px] text-slate-500 mt-2 max-w-[220px]">Tanyakan tentang perencanaan daerah, kegiatan, statistik, atau analisis database Bapperida.</p>
                 </div>
             )}
 
@@ -513,7 +513,7 @@ export default function NayaxaAssistant({
                           </motion.div>
                         </div>
                         <div className="flex-1 flex items-center justify-between">
-                          <span>{thought ? 'Proses Berpikir Nayaxa' : 'Nayaxa sedang menganalisis...'}</span>
+                          <span>{thought ? 'Proses Berpikir Bapperida AI' : 'Bapperida AI sedang menganalisis...'}</span>
                           <span className="text-[10px] font-mono text-slate-400 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-100">
                             {thinkTime}s
                           </span>
