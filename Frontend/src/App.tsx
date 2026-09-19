@@ -5,7 +5,6 @@ import Chat from '@/src/features/chat/components/Chat';
 import Knowledge from '@/src/features/knowledge/components/Knowledge';
 import Profile from '@/src/features/user/components/Profile';
 import UsageStats from '@/src/features/usage/components/UsageStats';
-import UserChat from '@/src/features/userChat/components/UserChat';
 
 import { AuthProvider } from '@/src/contexts/AuthContext';
 
@@ -17,8 +16,8 @@ function AppContent() {
           <Routes>
             <Route path="/" element={<Navigate to="/chat" replace />} />
             <Route path="/chat" element={<Chat />} />
-            <Route path="/messages" element={<UserChat />} />
-            <Route path="/user-chat" element={<UserChat />} />
+            <Route path="/messages" element={<Navigate to="/chat" replace />} />
+            <Route path="/user-chat" element={<Navigate to="/chat" replace />} />
             <Route path="/dashboard" element={<Navigate to="/chat" replace />} />
             <Route path="/knowledge" element={<Knowledge />} />
             <Route path="/usage" element={<UsageStats />} />

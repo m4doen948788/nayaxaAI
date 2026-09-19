@@ -158,22 +158,5 @@ export const createNayaxaApi = (apiKey: string) => {
       const res = await client.get('/auth/me', { params: { user_id: userId } });
       return res.data;
     },
-    // User-to-User Direct Chat
-    getUserChatContacts: async (userId: number, q?: string) => {
-      const res = await client.get('/user-chat/users', { params: { user_id: userId, q } });
-      return res.data;
-    },
-    getUserChatMessages: async (userId: number, peerId: number) => {
-      const res = await client.get('/user-chat/messages', { params: { user_id: userId, peer_id: peerId } });
-      return res.data;
-    },
-    sendUserChatMessage: async (data: { sender_id: number; recipient_id: number; message: string; file_url?: string; file_name?: string }) => {
-      const res = await client.post('/user-chat/send', data);
-      return res.data;
-    },
-    getUserChatUnreadCount: async (userId: number) => {
-      const res = await client.get('/user-chat/unread-count', { params: { user_id: userId } });
-      return res.data;
-    },
   };
 };
