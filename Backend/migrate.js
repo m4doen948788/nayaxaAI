@@ -124,25 +124,6 @@ async function migrate() {
             `
         },
         {
-            name: 'nayaxa_user_messages',
-            db: dbNayaxa,
-            sql: `
-                CREATE TABLE IF NOT EXISTS nayaxa_user_messages (
-                    id           INT AUTO_INCREMENT PRIMARY KEY,
-                    sender_id    INT NOT NULL,
-                    recipient_id INT NOT NULL,
-                    message      TEXT NOT NULL,
-                    file_url     VARCHAR(500) DEFAULT NULL,
-                    file_name    VARCHAR(255) DEFAULT NULL,
-                    is_read      TINYINT(1) DEFAULT 0,
-                    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_sender_recipient (sender_id, recipient_id),
-                    INDEX idx_recipient_unread (recipient_id, is_read),
-                    INDEX idx_created (created_at)
-                )
-            `
-        },
-        {
             name: 'nayaxa_mind_logs',
             db: dbNayaxa,
             sql: `
@@ -345,6 +326,14 @@ async function migrate() {
             VALUES (2, 'superadmin', 'Super Administrator', 'superadmin@example.com', '$2b$10$ZFSk3pKxESuIcy6xI.YaE.evjzN2JltyXMPGRC.Fi0t88q2jj2UOy', 'Super Administrator', 1)
         `);
         console.log('  ✅ nayaxa_users superadmin seeded/verified.');
+
+        // Cleanup deprecated legacy tables & test accounts from user chat removal
+        try {
+            await dbNayaxa.query(`DROP TABLE IF EXISTS nayaxa_user_messages`);
+            await dbNayaxa.query(`DELETE FROM nayaxa_users WHERE username IN ('sammyl', 'levina')`);
+        } catch (cleanupErr) {
+            // Ignored if already cleaned up
+        }
 
         // 1. Seed nayaxa_global_configs
         await dbNayaxa.query(`

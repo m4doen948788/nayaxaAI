@@ -6,7 +6,6 @@ import remarkGfm from 'remark-gfm';
 import { createNayaxaApi } from '@/src/api';
 import { useAuth } from '@/src/contexts/AuthContext';
 import CodeProposalReview from '@/src/features/chat/components/CodeProposalReview';
-import UserChat from '@/src/features/userChat/components/UserChat';
 
 const API_KEY = 'NAYAXA-BAPPERIDA-8888-9999-XXXX';
 const isNayaxaSite = typeof window !== 'undefined' && (window.location.hostname.includes('nayaxa.my.id') || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
@@ -90,8 +89,6 @@ export default function Chat() {
   const [authPassword, setAuthPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'ai' | 'user-chat'>('ai');
-  const [totalUnreadUserChat, setTotalUnreadUserChat] = useState<number>(0);
 
   const isMobileOrPWA = () => {
     if (typeof window === 'undefined') return false;
@@ -149,34 +146,6 @@ export default function Chat() {
   useEffect(() => {
     fetchSessions();
   }, [currentUser?.id]);
-
-  useEffect(() => {
-    if (!currentUser?.id) {
-      setTotalUnreadUserChat(0);
-      return;
-    }
-    const fetchUnread = async () => {
-      try {
-        const res = await api.getUserChatUnreadCount(currentUser.id);
-        if (res.success && typeof res.total_unread === 'number') {
-          setTotalUnreadUserChat(res.total_unread);
-        }
-      } catch {}
-    };
-    fetchUnread();
-    const timer = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        fetchUnread();
-      }
-    }, 10000);
-    return () => clearInterval(timer);
-  }, [currentUser?.id]);
-
-  useEffect(() => {
-    if (!currentUser && activeTab === 'user-chat') {
-      setActiveTab('ai');
-    }
-  }, [currentUser, activeTab]);
 
   useEffect(() => {
     if ((messages.length > 0 || isTyping) && scrollContainerRef.current) {
@@ -529,51 +498,12 @@ export default function Chat() {
             </button>
           </div>
 
-          {/* Mode Switcher: AI Assistant vs Chat Pengguna (Hanya muncul jika SUDAH LOGIN) */}
-          {currentUser && (
-            <div className="px-5 pt-3 pb-1">
-              <div className="grid grid-cols-2 p-1 bg-slate-200/60 rounded-2xl gap-1">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('ai')}
-                  className={`py-2 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                    activeTab === 'ai'
-                      ? 'bg-white text-indigo-600 shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <Bot size={15} />
-                  <span>Tanya AI</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('user-chat')}
-                  className={`py-2 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 relative ${
-                    activeTab === 'user-chat'
-                      ? 'bg-white text-indigo-600 shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <MessageSquare size={15} />
-                  <span>Chat Rekan</span>
-                  {totalUnreadUserChat > 0 && (
-                    <span className="w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] font-bold flex items-center justify-center animate-pulse">
-                      {totalUnreadUserChat}
-                    </span>
-                  )}
-                </button>
-              </div>
-            </div>
-          )}
-
-        {/* New Chat Button (Hanya di mode AI) */}
-        {activeTab === 'ai' && (
-          <div className="p-5 pb-3">
-            <button onClick={startNewChat} className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-2xl transition-all shadow-lg shadow-indigo-600/20">
-              <Plus size={18} /> Percakapan Baru
-            </button>
-          </div>
-        )}
+        {/* New Chat Button */}
+        <div className="p-5 pb-3">
+          <button onClick={startNewChat} className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-2xl transition-all shadow-lg shadow-indigo-600/20">
+            <Plus size={18} /> Percakapan Baru
+          </button>
+        </div>
 
         {/* Recents Sessions List */}
         <div className="flex-1 overflow-y-auto px-3 space-y-1 custom-scrollbar">
@@ -739,20 +669,7 @@ export default function Chat() {
 
       {/* Main Area */}
       <div className="flex-1 flex flex-col min-h-0 relative bg-white shadow-inner">
-        {activeTab === 'user-chat' ? (
-          <div className="flex-1 flex flex-col min-h-0 relative">
-            <UserChat
-              onSwitchToAi={() => setActiveTab('ai')}
-              onOpenAuth={(mode) => {
-                setAuthMode(mode);
-                setAuthError('');
-                setIsAuthModalOpen(true);
-              }}
-            />
-          </div>
-        ) : (
-          <>
-            <header className="px-4 py-3.5 md:px-6 md:py-4 border-b border-slate-100 flex items-center justify-between backdrop-blur-md z-10 bg-white/80">
+        <header className="px-4 py-3.5 md:px-6 md:py-4 border-b border-slate-100 flex items-center justify-between backdrop-blur-md z-10 bg-white/80">
           <div className="flex items-center gap-3">
             <button
               type="button"
@@ -903,8 +820,6 @@ export default function Chat() {
             </div>
             <p className="text-center text-[10px] text-slate-500 mt-4 uppercase tracking-tighter">{codingMode ? '⚠ Coding Agent ON — Nayaxa memiliki akses baca/tulis file proyek.' : 'Nayaxa AI can make mistakes. Verify important information.'}</p>
         </div>
-          </>
-        )}
       </div>
 
       {/* Modal Masuk & Buat Akun */}
