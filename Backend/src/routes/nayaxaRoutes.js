@@ -3,7 +3,6 @@ const router = express.Router();
 const nayaxaController = require('../controllers/nayaxaController');
 const nayaxaKnowledgeController = require('../controllers/nayaxaKnowledgeController');
 const nayaxaAuthController = require('../controllers/nayaxaAuthController');
-const nayaxaUserChatController = require('../controllers/nayaxaUserChatController');
 const { verifyApiKey } = require('../middleware/apiKeyMiddleware');
 const path = require('path');
 const expressStatic = express.static;
@@ -117,11 +116,5 @@ router.post('/proposals/:id/reject', nayaxaController.rejectProposal);
 router.post('/auth/login', nayaxaAuthController.login);
 router.post('/auth/register', nayaxaAuthController.register);
 router.get('/auth/me', nayaxaAuthController.getMe);
-
-// User-to-User Direct Chat Routes
-router.get('/user-chat/users', nayaxaUserChatController.getContacts);
-router.get('/user-chat/messages', nayaxaUserChatController.getMessages);
-router.post('/user-chat/send', nayaxaUserChatController.sendMessage);
-router.get('/user-chat/unread-count', nayaxaUserChatController.getUnreadCount);
 
 module.exports = router;
