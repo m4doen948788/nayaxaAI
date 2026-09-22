@@ -69,7 +69,14 @@ export default function NayaxaAssistant({
     const userId = user?.id || 7;
     api.getSessions(userId).then(res => {
       if (res && res.success) {
-        setSessions(res.sessions || []);
+        const rawSessions = res.sessions || [];
+        const validSessions = rawSessions.filter((s: any) => {
+          if (s.is_pinned) return true;
+          const d = s.last_msg ? new Date(s.last_msg).getTime() : null;
+          if (!d || isNaN(d)) return true;
+          return (Date.now() - d) <= 3 * 24 * 60 * 60 * 1000;
+        });
+        setSessions(validSessions);
       }
     }).catch(err => {
       console.error("Gagal mengambil riwayat sesi:", err);
@@ -364,7 +371,10 @@ export default function NayaxaAssistant({
         {showHistory ? (
             <div className="space-y-4 animate-in fade-in duration-300">
               <div className="flex items-center justify-between border-b border-slate-200/85 pb-2.5">
-                <span className="text-[10px] font-black text-slate-400 tracking-wider uppercase">Riwayat Obrolan</span>
+                <div>
+                  <span className="text-[10px] font-black text-slate-400 tracking-wider uppercase">Riwayat Obrolan</span>
+                  <p className="text-[9px] text-slate-400 font-medium">Obrolan tanpa pin otomatis terhapus setelah 3 hari</p>
+                </div>
                 <button
                   onClick={handleNewChat}
                   className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg text-[9px] font-black uppercase transition-all flex items-center gap-1.5 border border-indigo-100"

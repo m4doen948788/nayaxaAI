@@ -608,15 +608,72 @@ const nayaxaMindService = {
 
     cleanExpiredChats: async () => {
         try {
-            console.log('[Mind] Cleaning up expired chat history (older than 3 days)...');
-            const [result] = await dbNayaxa.query(`
+            console.log('[Mind] Cleaning up expired chat sessions & history (older than 3 days)...');
+            
+            // 1. Identify unpinned sessions whose latest activity is older than 3 days
+            const [expiredRows] = await dbNayaxa.query(`
+                SELECT DISTINCT sess.session_id
+                FROM (
+                    SELECT s.session_id, COALESCE(MAX(h.created_at), s.updated_at, s.created_at) as last_activity
+                    FROM nayaxa_chat_sessions s
+                    LEFT JOIN nayaxa_chat_history h ON s.session_id = h.session_id
+                    WHERE s.session_id NOT IN (
+                        SELECT session_id FROM nayaxa_pinned_sessions WHERE session_id IS NOT NULL
+                    )
+                    GROUP BY s.session_id, s.updated_at, s.created_at
+
+                    UNION
+
+                    SELECT h.session_id, MAX(h.created_at) as last_activity
+                    FROM nayaxa_chat_history h
+                    LEFT JOIN nayaxa_pinned_sessions p ON h.session_id = p.session_id
+                    WHERE p.session_id IS NULL
+                    GROUP BY h.session_id
+                ) sess
+                GROUP BY sess.session_id
+                HAVING MAX(sess.last_activity) < NOW() - INTERVAL 3 DAY
+            `);
+
+            const expiredIds = (expiredRows || []).map(r => r.session_id).filter(Boolean);
+            let deletedHistoryCount = 0;
+            let deletedSessionsCount = 0;
+
+            if (expiredIds.length > 0) {
+                // Delete in chunks of 200 to be completely safe
+                for (let i = 0; i < expiredIds.length; i += 200) {
+                    const chunk = expiredIds.slice(i, i + 200);
+                    const [resHist] = await dbNayaxa.query('DELETE FROM nayaxa_chat_history WHERE session_id IN (?)', [chunk]);
+                    const [resSess] = await dbNayaxa.query('DELETE FROM nayaxa_chat_sessions WHERE session_id IN (?)', [chunk]);
+                    deletedHistoryCount += (resHist.affectedRows || 0);
+                    deletedSessionsCount += (resSess.affectedRows || 0);
+                }
+            }
+
+            // 2. Also cleanup any orphan/stale messages or sessions older than 3 days that are not pinned
+            const [orphanHistory] = await dbNayaxa.query(`
                 DELETE FROM nayaxa_chat_history 
                 WHERE created_at < NOW() - INTERVAL 3 DAY 
-                  AND session_id NOT IN (SELECT session_id FROM nayaxa_pinned_sessions)
+                  AND session_id NOT IN (
+                      SELECT session_id FROM nayaxa_pinned_sessions WHERE session_id IS NOT NULL
+                  )
             `);
-            console.log(`[Mind] Chat history cleanup complete. Deleted rows: ${result.affectedRows}`);
+            deletedHistoryCount += (orphanHistory.affectedRows || 0);
+
+            const [orphanSessions] = await dbNayaxa.query(`
+                DELETE FROM nayaxa_chat_sessions 
+                WHERE updated_at < NOW() - INTERVAL 3 DAY 
+                  AND created_at < NOW() - INTERVAL 3 DAY 
+                  AND session_id NOT IN (
+                      SELECT session_id FROM nayaxa_pinned_sessions WHERE session_id IS NOT NULL
+                  )
+            `);
+            deletedSessionsCount += (orphanSessions.affectedRows || 0);
+
+            console.log(`[Mind] Chat cleanup complete: ${deletedSessionsCount} sessions, ${deletedHistoryCount} messages deleted.`);
+            return { success: true, deletedSessions: deletedSessionsCount, deletedMessages: deletedHistoryCount };
         } catch (e) {
             console.error('[Mind] Error cleaning up expired chats:', e.message);
+            return { success: false, error: e.message };
         }
     },
 
@@ -626,18 +683,23 @@ const nayaxaMindService = {
     init: (intervalMinutes = 60) => {
         console.log(`[Mind] System initialized. Pulse every ${intervalMinutes} minutes.`);
         
-        // Immediate first run (deferred 10sec to let server start)
+        // 1. Immediate chat cleanup on startup (deferred 5s)
         setTimeout(async () => {
-            // learnNewDocuments DISABLED to save tokens. Use on-demand ingestion instead.
-            // await nayaxaMindService.learnNewDocuments(); 
-            await nayaxaMindService.generateSystemSnapshot();
             await nayaxaMindService.cleanExpiredChats();
-        }, 10000);
+        }, 5000);
 
-        // Periodic Interval (Snapshot logic only)
+        // 2. Periodic dedicated cleanup interval (every 30 minutes, decoupled from snapshot)
+        setInterval(async () => {
+            await nayaxaMindService.cleanExpiredChats();
+        }, 30 * 60 * 1000);
+
+        // 3. System snapshot in separate lifecycle
+        setTimeout(async () => {
+            await nayaxaMindService.generateSystemSnapshot();
+        }, 15000);
+
         setInterval(async () => {
             await nayaxaMindService.generateSystemSnapshot();
-            await nayaxaMindService.cleanExpiredChats();
         }, intervalMinutes * 60 * 1000);
     },
 

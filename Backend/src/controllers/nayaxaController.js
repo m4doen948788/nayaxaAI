@@ -19,6 +19,7 @@ const stripEmoji = (str) => {
 // In-Memory Cache for Insights & Repeat Questions
 const insightsCache = new Map();
 const chatResponseCache = new Map();
+let lastChatCleanupTime = 0;
 
 // 20-Request Concurrent Queue System (Glossary expanded at 11:11)
 let activeRequests = 0;
@@ -694,7 +695,10 @@ const nayaxaController = {
                     GROUP BY h.session_id, h.app_id, h.user_id
                 ) sess
                 LEFT JOIN nayaxa_pinned_sessions p ON sess.session_id = p.session_id AND p.user_id = sess.user_id
-                WHERE sess.title IS NOT NULL AND TRIM(sess.title) != '' AND sess.title != '0'
+                WHERE sess.title IS NOT NULL 
+                  AND TRIM(sess.title) != '' 
+                  AND sess.title != '0'
+                  AND (p.id IS NOT NULL OR sess.last_msg >= NOW() - INTERVAL 3 DAY)
                 ORDER BY is_pinned DESC, sess.last_msg DESC
                 LIMIT 25`,
                 queryParams
@@ -711,6 +715,13 @@ const nayaxaController = {
 
             // Clean existing rows in DB that start with 0
             dbNayaxa.query(`UPDATE nayaxa_chat_sessions SET title = TRIM(SUBSTRING(title, 2)) WHERE title LIKE '0 %' OR title LIKE '0.%' OR title LIKE '0-%'`).catch(() => {});
+
+            // Trigger passive cleanup in background if more than 15 minutes since last cleanup
+            if (Date.now() - lastChatCleanupTime > 15 * 60 * 1000) {
+                lastChatCleanupTime = Date.now();
+                const nayaxaMind = require('../services/nayaxaMindService');
+                nayaxaMind.cleanExpiredChats().catch(() => {});
+            }
 
             console.log('[Sessions] getChatSessions result length:', cleanRows.length, 'rows:', cleanRows);
             res.json({ success: true, sessions: cleanRows });
